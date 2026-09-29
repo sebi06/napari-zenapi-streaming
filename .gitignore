@@ -1,0 +1,11 @@
+config.ini
+src/napari_zen_streaming/napari_zen_streaming.egg-info/
+public/
+archive/
+*.log
+**/__pycache__/
+.pytest_cache/
+/.github/instructions/
+/snipptes
+/src/napari_zenapi_streaming.egg-info
+/snippets

@@ -1,0 +1,100 @@
+# Napari ZEN API Streaming Sequence (code-aligned)
+
+shape: sequence_diagram
+
+User: "User"
+App: "ZENApplication"
+NapariUI: "StreamingViewer UI"
+ZENConnection: "ZEN Connection"
+StatusMonitor: "Status Monitor"
+StreamPipeline: "Stream Pipeline"
+Viewer: "Napari Viewer"
+RestructureTask: "Restructure Task"
+OmeZarr: "stream_to_omezarr_with_config"
+
+App -> ZENConnection: "Initialize connection and services"
+
+# Startup
+App -> NapariUI: "Create UI and populate experiments"
+User -> NapariUI: "Select operating mode"
+
+# ---- Display only path ----
+User -> NapariUI: "[Display only] Click Start in napari"
+App -> StreamPipeline: "Start streaming monitor"
+NapariUI -> ZENConnection: "start_experiment(name)"
+ZENConnection -> NapariUI: "experiment_id"
+NapariUI -> NapariUI: "Show stop button"
+NapariUI -> StatusMonitor: "Start status monitor task"
+StatusMonitor -> ZENConnection: "monitor_all_experiments()"
+ZENConnection -> StatusMonitor: "Frame/status stream"
+StatusMonitor -> StatusMonitor: "Poll is_experiment_running flag"
+
+User -> ZENConnection: "Optional: start experiment in ZEN Blue"
+
+# Auto-start mode path (ZEN_UI_START=false)
+App -> ZENConnection: "start_experiment(config.exp_name)"
+ZENConnection -> App: "experiment_id"
+
+# Frame loop (Display only)
+StreamPipeline -> StreamPipeline: "Extract FramePosition S,T,M,Z,C"
+StreamPipeline -> Viewer: "add_frame(image, metadata)"
+Viewer -> Viewer: "Clear old layers if first frame"
+Viewer -> Viewer: "Store sparse key (S,T,M,Z,C) and update 7D layer"
+Viewer -> RestructureTask: "Start or reset restructure check"
+
+# Completion alternatives (Display only)
+User -> NapariUI: "Optional: click Stop in napari"
+NapariUI -> NapariUI: "_close_progress_bar()"
+NapariUI -> ZENConnection: "stop_experiment(experiment_id)"
+NapariUI -> Viewer: "perform_restructure()"
+
+ZENConnection -> StatusMonitor: "is_experiment_running = false"
+StatusMonitor -> Viewer: "perform_restructure()"
+
+RestructureTask -> RestructureTask: "Timeout (default 10.0s) with no new frames"
+RestructureTask -> Viewer: "perform_restructure()"
+
+# Restructure output (Display only)
+Viewer -> Viewer: "Remove 7D layer"
+Viewer -> Viewer: "Create 6D channel layers (S,T,M,Z,Y,X)"
+Viewer -> NapariUI: "on_experiment_finished()"
+
+# Channel filter (Display only, any time)
+User -> NapariUI: "Change Channel filter combo box"
+NapariUI -> NapariUI: "Update _effective_channel_index"
+NapariUI -> StreamPipeline: "suspend_reader() + resume_reader()"
+StreamPipeline -> StreamPipeline: "New gRPC stream with updated channel_index"
+
+# ---- OME-ZARR only path ----
+User -> NapariUI: "[OME-ZARR only] Click Start in napari"
+NapariUI -> NapariUI: "Validate selected experiment"
+NapariUI -> ZENConnection: "Use cached or load/export experiment metadata"
+ZENConnection -> NapariUI: "T,C,Z,S,M, Z spacing, well positions"
+NapariUI -> NapariUI: "Build ecfg from UI settings and exported XML"
+NapariUI -> StreamPipeline: "suspend_reader() before opening writer stream"
+NapariUI -> OmeZarr: "stream_to_omezarr_with_config(ecfg)"
+OmeZarr -> OmeZarr: "Create dedicated gRPC channel"
+OmeZarr -> OmeZarr: "Open one pixel stream per source channel"
+OmeZarr -> ZENConnection: "start_experiment(name) [if auto-trigger on]"
+ZENConnection -> OmeZarr: "experiment_id [if auto-trigger on]"
+OmeZarr -> OmeZarr: "[if auto-trigger off] Writer Armed \u2014 wait for ZEN-started frames"
+OmeZarr -> OmeZarr: "Wait for first frame size and scale"
+OmeZarr -> ZENConnection: "get_status()"
+ZENConnection -> OmeZarr: "Positive live T,C,Z,S,M counts"
+OmeZarr -> OmeZarr: "Use exported XML counts only as fallback"
+OmeZarr -> OmeZarr: "Build expected map in T,S,M,C,Z append order"
+OmeZarr -> OmeZarr: "Read T,S,M,Z from FramePosition; C from subscription"
+OmeZarr -> OmeZarr: "Map (T,S,M,C,Z) to linear slot"
+OmeZarr -> OmeZarr: "Skip unexpected and duplicate coordinates"
+OmeZarr -> OmeZarr: "Buffer out-of-order frames; append consecutive slots"
+OmeZarr -> OmeZarr: "Finish on complete unique key set or inactivity timeout"
+OmeZarr -> OmeZarr: "Drain pending frames, skip missing slots, close OME-Zarr stream"
+OmeZarr -> OmeZarr: "HCS: finalize directly written wells and row groups"
+OmeZarr -> OmeZarr: "Generic: group by S, identify tile by M"
+OmeZarr -> OmeZarr: "Generic: place by streamed XYZ/scale; higher M wins overlaps"
+OmeZarr -> OmeZarr: "Generic: advertise one TCZYX mosaic per scene; optionally retain raw tiles"
+OmeZarr -> NapariUI: "Return zarr_path"
+
+# ---- Common finish ----
+NapariUI -> NapariUI: "_close_progress_bar()"
+NapariUI -> NapariUI: "Show start button and clear current_experiment_id"

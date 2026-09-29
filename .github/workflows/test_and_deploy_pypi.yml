@@ -1,0 +1,87 @@
+name: test_and_deploy_pypi
+
+on:
+    push:
+        branches: [master, npe2, use_zenapi_package]
+        tags: ["v*"]
+    pull_request:
+        branches: [master, npe2, use_zenapi_package]
+    workflow_dispatch:
+
+jobs:
+    test:
+        name: ${{ matrix.platform }} py${{ matrix.python-version }}
+        runs-on: ${{ matrix.platform }}
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                platform: [ubuntu-latest, windows-latest, macos-latest]
+                python-version: ["3.11", "3.12", "3.13"]
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Python ${{ matrix.python-version }}
+              uses: actions/setup-python@v5
+              with:
+                  python-version: ${{ matrix.python-version }}
+
+            - name: Set up Qt libraries (Linux)
+              if: runner.os == 'Linux'
+              uses: tlambert03/setup-qt-libs@v1
+
+            - name: Install Windows OpenGL
+              if: runner.os == 'Windows'
+              run: |
+                  git clone --depth 1 https://github.com/pyvista/gl-ci-helpers.git
+                  powershell gl-ci-helpers/appveyor/install_opengl.ps1
+
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install -e .[testing] build
+
+            - name: Set environment variables
+              run: |
+                  echo "QT_QPA_PLATFORM=offscreen" >> $GITHUB_ENV
+                  echo "AIOCP_MAX_WORKERS=1" >> $GITHUB_ENV
+
+            - name: Run tests (allow empty test suite)
+              uses: aganders3/headless-gui@v2
+              with:
+                  run: >-
+                      python -c "import subprocess,sys; rc=subprocess.call([sys.executable,
+                      '-m','pytest','-q','src/napari_zen_streaming/_tests']);
+                      print('No tests collected in src/napari_zen_streaming/_tests'
+                      if rc==5 else ''); sys.exit(0 if rc in (0,5) else rc)"
+
+            - name: Verify package builds
+              run: python -m build --sdist --wheel --outdir dist/ci
+
+    deploy:
+        needs: [test]
+        runs-on: ubuntu-latest
+        if: startsWith(github.ref, 'refs/tags/v')
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - name: Install publish dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install -U setuptools setuptools_scm wheel twine build
+
+            - name: Build and publish to PyPI
+              env:
+                  TWINE_USERNAME: __token__
+                  TWINE_PASSWORD: ${{ secrets.TWINE_API_KEY }}
+              run: |
+                  python -m build .
+                  twine upload dist/*

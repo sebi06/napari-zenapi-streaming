@@ -1,0 +1,114 @@
+[project]
+name = "napari-zen-streaming"
+version = "0.0.1"
+description = "ZEN API streaming plugin for napari"
+readme = "ReadMe.md"
+requires-python = ">=3.11, <3.14"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    {name = "Krijn H. van der Steen", email = "k.h.vandersteen@umcutrecht.nl"},
+    {name = "Sebastian Rhode", email = "sebastian.rhode@zeiss.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Framework :: napari",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+
+keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming"]
+
+dependencies = [
+    "napari[all]>=0.9.1",
+    "magicgui>=0.7.0",
+    "qtpy>=2.3.0",
+    "numpy>=1.21.0",
+    "qasync>=0.24.0",
+    "loguru>=0.7.0",
+    "grpclib",
+    "pydantic",
+    "python-dotenv",
+    "ome-writers[acquire-zarr]",
+    "ngff-zarr[dask-image]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-qt",
+    "pytest-asyncio",
+    "black",
+    "ruff",
+    "mypy",
+]
+testing = [
+    "tox",
+    "pytest",  # https://docs.pytest.org/en/latest/contents.html
+    "pytest-cov",  # https://pytest-cov.readthedocs.io/en/latest/
+    "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
+    "pytest-timeout",  # https://pypi.org/project/pytest-timeout/
+    "napari",
+    "pyqt5",
+]
+
+[project.entry-points."napari.manifest"]
+napari-zen-streaming = "napari_zen_streaming:napari.yaml"
+
+[project.urls]
+"Homepage" = "https://github.com/sebi06/napari-zenapi-streaming"
+"Bug Tracker" = "https://github.com/sebi06/napari-zenapi-streaming/issues"
+"Documentation" = "https://github.com/sebi06/napari-zenapi-streaming#readme"
+"Source Code" = "https://github.com/sebi06/napari-zenapi-streaming"
+
+[build-system]
+requires = ["setuptools>=80", "wheel", "setuptools-scm>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+napari_zen_streaming = ["napari.yaml"]
+
+[tool.black]
+line-length = 79
+target-version = ['py311', 'py312', 'py313']
+
+[tool.ruff]
+line-length = 79
+lint.select = [
+    "E", "F", "W", #flake8
+    "UP", # pyupgrade
+    "I", # isort
+    "BLE", # flake8-blind-exception
+    "B", # flake8-bugbear
+    "A", # flake8-builtins
+    "C4", # flake8-comprehensions
+    "ISC", # flake8-implicit-str-concat
+    "G", # flake8-logging-format
+    "PIE", # flake8-pie
+    "SIM", # flake8-simplify
+]
+lint.ignore = [
+    "E203", "W503", # Black-compatible formatting
+    "G004", # logging is using f-string
+    "G201", # use .exception(...) instead of .error(...) in except block
+    "E501", # line too long. let black handle this
+    "UP006", "UP007", # type annotation. As using magicgui require runtime type annotation then we disable this.
+    "SIM117", # flake8-simplify - some of merged with statements are not looking great with black, reanble after drop python 3.9
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

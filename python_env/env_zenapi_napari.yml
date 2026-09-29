@@ -1,0 +1,82 @@
+name: zenapi-napari
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - colormap
+  - czifile
+  - dask
+  - dask-image
+  - docutils
+  - fsspec
+  - magicgui>=0.7.0
+  - matplotlib
+  - napari>=0.9.1
+  - libblas=*=*openblas
+  - numpy>=1.21.0
+  - ome-zarr
+  - pandas
+  - pip
+  - plotly
+  - pooch
+  - pyqt=5
+  - pytest>=6.0
+  - pytest-cov
+  - pytest-asyncio
+  - pytest-qt
+  - pytest-timeout
+  - pydantic
+  - python-box[all]
+  - python-dateutil
+  - qasync>=0.24.0
+  - qtpy>=2.3.0
+  - black
+  - ruff
+  - mypy
+  - setuptools
+  - shapely
+  - superqt
+  - tqdm
+  - tox
+  - validators
+  - wheel
+  - xarray
+  - xarray[complete]
+  - xmltodict
+  - zarr
+
+  - pip:
+      - aicspylibczi>=3.3.1
+      - betterproto==2.0.0b7
+      - betterproto[compiler]==2.0.0b7
+      - cztile
+      - czitools
+      - grpclib
+      - loguru
+      - napari-brightness-contrast
+      - napari-crop
+      - napari-czitools
+      - napari-layer-details-display
+      - napari-ome-zarr
+      - napari-plugin-search
+      - ngff-zarr
+      - ngff-zarr[dask-image]
+      - ngff-zarr[validate]
+      - pylibCZIrw
+      - pip-system-certs
+      - python-dotenv
+      - https://raw.githubusercontent.com/zeiss-microscopy/OAD/e7692b6a4038daee1179b98950a601df6125b23c/ZEN-API/python_package/zen_api-2026.05.1/dist/zen_api-2026.05.1-py3-none-any.whl
+      - ome-writers[acquire-zarr]
+
+# Create an environment - use conda or mamba
+# conda env create --file env_zenapi_napari.yml
+
+# Update an environment
+# conda env update --name zenapi-napari --file env_zenapi_napari.yml --prune
+# Remove an environment
+# conda remove --name zenapi --all
+# conda clean --all
+
+# Show the locations of all versions of Python that are currently in the path
+# Windows: where python
+# Linux which -a python

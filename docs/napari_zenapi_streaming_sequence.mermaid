@@ -1,0 +1,154 @@
+sequenceDiagram
+    participant User
+    participant App as ZENApplication
+    participant NapariUI as StreamingViewer UI
+    participant ZENConnection as ZEN Connection
+    participant StatusMonitor as Status Monitor
+    participant StreamPipeline as Stream Pipeline
+    participant Viewer as Napari Viewer
+    participant RestructureTask as Restructure Task
+    participant OmeZarr as stream_to_omezarr_with_config
+
+    App->>ZENConnection: Initialize connection + services
+
+    alt ZEN_UI_START=true (monitoring mode)
+        App->>NapariUI: Create selector UI and populate experiments
+
+        alt Mode = Display only
+            App->>StreamPipeline: monitor_all_experiments()
+
+            alt Start from napari button
+                User->>NapariUI: Select experiment & click Start
+                NapariUI->>NapariUI: Hide start button / clear old layers
+                NapariUI->>ZENConnection: start_experiment(name)
+                ZENConnection-->>NapariUI: experiment_id
+                NapariUI->>NapariUI: Show stop button
+                NapariUI->>StatusMonitor: Start status monitor task
+                StatusMonitor->>ZENConnection: monitor_all_experiments()
+                ZENConnection-->>StatusMonitor: Frame/status stream
+                Note over StatusMonitor: Polls is_experiment_running flag
+            else Start from ZEN Blue
+                User->>ZENConnection: Start experiment in ZEN Blue
+                Note over NapariUI: No current_experiment_id in UI
+            end
+
+            loop For each frame
+                StreamPipeline->>StreamPipeline: Extract FramePosition S,T,M,Z,C
+                StreamPipeline->>Viewer: add_frame(image, metadata)
+
+                alt First frame of new acquisition
+                    Viewer->>Viewer: Clear old layers and reset frame data
+                end
+
+                Viewer->>Viewer: Cancel pending restructure task
+                Viewer->>Viewer: Store under sparse key (S,T,M,Z,C)
+                Viewer->>Viewer: Update last_frame_time
+                Viewer->>Viewer: Update 7D streaming layer (S,T,M,Z,C,Y,X)
+                Viewer->>RestructureTask: Start new check task
+
+                alt current_experiment_id exists
+                    RestructureTask->>RestructureTask: Wait indefinitely
+                    Note over RestructureTask: Status monitor triggers restructure
+                else No current_experiment_id
+                    RestructureTask->>RestructureTask: Wait timeout (default 10.0s)
+                end
+            end
+
+            alt User clicks Stop in napari
+                User->>NapariUI: Click Stop button
+                NapariUI->>NapariUI: _close_progress_bar()
+                NapariUI->>ZENConnection: stop_experiment(experiment_id)
+                NapariUI->>Viewer: perform_restructure()
+            else Completion via status monitor
+                ZENConnection->>StatusMonitor: is_experiment_running = false
+                StatusMonitor->>Viewer: perform_restructure()
+            else Completion via timeout
+                RestructureTask->>RestructureTask: Timeout elapsed with no new frames
+                RestructureTask->>Viewer: perform_restructure()
+            end
+
+            Viewer->>Viewer: Set is_streaming = false
+            Viewer->>Viewer: Remove 7D streaming layer
+
+            loop For each channel
+                Viewer->>Viewer: Build 6D array (S,T,M,Z,Y,X)
+                Viewer->>Viewer: Create channel layer
+            end
+
+            Viewer->>Viewer: Set axis labels (S,T,M,Z,Y,X)
+
+            Note over NapariUI: Channel filter (Display only, any time)
+            User->>NapariUI: Change Channel filter combo box
+            NapariUI->>NapariUI: Update _effective_channel_index
+            NapariUI->>StreamPipeline: suspend_reader() + resume_reader()
+            Note over StreamPipeline: New gRPC stream opens with updated channel_index
+
+        else Mode = OME-ZARR only
+            User->>NapariUI: Select experiment & click Start
+            NapariUI->>NapariUI: Validate selected experiment
+            NapariUI->>ZENConnection: Use cached or load/export experiment metadata
+            ZENConnection-->>NapariUI: T,C,Z,S,M, Z spacing, well positions
+            NapariUI->>NapariUI: Build ecfg from UI settings and exported XML
+            NapariUI->>StreamPipeline: suspend_reader() before opening writer stream
+            NapariUI->>OmeZarr: stream_to_omezarr_with_config(ecfg)
+            OmeZarr->>OmeZarr: Create dedicated gRPC channel
+            OmeZarr->>OmeZarr: Open one pixel stream per source channel
+
+            alt Auto-trigger checked (default)
+                OmeZarr->>ZENConnection: start_experiment(name)
+                ZENConnection-->>OmeZarr: experiment_id
+            else Auto-trigger unchecked
+                Note over NapariUI: Button shows "Writer Armed — start ZEN Experiment"
+                User->>ZENConnection: Start experiment manually in ZEN Blue
+            end
+
+            OmeZarr->>OmeZarr: Wait for first frame to get frame size and scale
+            OmeZarr->>ZENConnection: get_status()
+            ZENConnection-->>OmeZarr: Live T,C,Z,S,M counts
+            Note over OmeZarr: Positive live counts define valid ranges
+            Note over OmeZarr: Exported XML dimensions are fallback
+            OmeZarr->>OmeZarr: Build expected map in T,S,M,C,Z append order
+
+            loop For each frame (tight while-True loop)
+                OmeZarr->>OmeZarr: Read frame from gRPC stream
+                OmeZarr->>OmeZarr: Read T,S,M,Z from FramePosition and C from subscription
+                OmeZarr->>OmeZarr: Map key (T,S,M,C,Z) to linear slot
+                alt Unexpected or duplicate key
+                    OmeZarr->>OmeZarr: Skip frame
+                else New expected key
+                    OmeZarr->>OmeZarr: Capture streamed XYZ/scale for (S,M)
+                    OmeZarr->>OmeZarr: Buffer by slot and append consecutive slots
+                end
+                alt All unique expected keys received
+                    OmeZarr->>OmeZarr: Break
+                end
+            end
+
+            OmeZarr->>OmeZarr: Drain pending frames and skip missing slots
+            OmeZarr->>OmeZarr: Close OME-Zarr stream
+            alt Explicit HCS metadata
+                OmeZarr->>OmeZarr: Finalize directly written well images and HCS row groups
+            else Generic multiple S or M
+                OmeZarr->>OmeZarr: Group raw tiles by streamed S index
+                OmeZarr->>OmeZarr: Identify each raw tile by streamed M index
+                OmeZarr->>OmeZarr: Place using streamed XYZ and pixel scale
+                OmeZarr->>OmeZarr: Higher M replaces overlaps and gaps remain
+                OmeZarr->>OmeZarr: Advertise one TCZYX mosaic per scene
+            end
+            OmeZarr-->>NapariUI: Return zarr_path
+        end
+
+    else ZEN_UI_START=false (auto-start mode)
+        App->>ZENConnection: start_experiment(config.exp_name)
+        ZENConnection-->>App: experiment_id
+        App->>StreamPipeline: monitor_experiment(experiment_id)
+        Note over NapariUI: No UI-start status monitor task
+    end
+
+    NapariUI->>NapariUI: on_experiment_finished()
+    NapariUI->>NapariUI: _close_progress_bar()
+    NapariUI->>NapariUI: Show start button + hide stop button
+    NapariUI->>StatusMonitor: Cancel monitoring task
+    NapariUI->>NapariUI: Clear current_experiment_id
+
+    Note over User,NapariUI: Ready for next acquisition

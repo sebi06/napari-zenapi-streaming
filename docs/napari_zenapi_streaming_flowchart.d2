@@ -1,0 +1,273 @@
+# Napari ZEN API Streaming Flowchart (code-aligned)
+
+direction: down
+
+start: Start application {
+  shape: oval
+  style.fill: "#90EE90"
+}
+
+setup: Load config and setup ZEN connection
+
+ui_mode_check: "ZEN_UI_START?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+monitor_mode: "Create selector UI and populate experiments" {
+  style.fill: "#e1f5ff"
+}
+
+auto_mode: "Auto-start configured experiment and monitor its ID" {
+  style.fill: "#ffe1e1"
+}
+
+mode_select: "User selects operating mode" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+# ---- Display only path ----
+start_source: "How acquisition starts? (Display only)" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+start_napari: "User starts from napari UI"
+start_zen: "User starts in ZEN Blue"
+stop_napari: "User clicks Stop in napari UI\n(_close_progress_bar)"
+
+set_id: "Store current_experiment_id and start status monitor"
+
+frames: "StreamingPipeline receives frames"
+
+first_frame: "First frame of new acquisition?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+clear_reset: "Clear existing layers and reset frame storage"
+cancel_restructure: "Cancel pending restructure check task"
+
+extract_frame_indices: "Extract live FramePosition S,T,M,Z,C"
+store_frame: "Store under sparse key S,T,M,Z,C and update last_frame_time"
+update_stream: "Create or update linear 7D streaming layer"
+check_task: "Start new restructure check task"
+
+has_ui_id: "current_experiment_id set?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+wait_status: "Poll monitor_all_experiments\u2014 wait for is_experiment_running = false"
+wait_timeout: "Wait ZEN_RESTRUCTURE_TIMEOUT (default 10.0s)"
+
+no_frames_timeout: "No frames during timeout?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+restructure: perform_restructure {
+  style.fill: "#d4edda"
+}
+
+stream_false: "Set is_streaming false"
+remove_stream: "Remove streaming layer"
+create_channels: "Create 6D layer per channel (STMZYX)"
+set_axes: "Set axis labels S,T,M,Z,Y,X"
+
+# Channel filter (Display only, any time)
+channel_filter: "Channel filter combo box\n(0\u201331 or All channels)" {
+  style.fill: "#e1f5e1"
+}
+channel_filter_update: "Update _effective_channel_index"
+channel_reader_restart: "Restart pipeline reader\n(suspend_reader + resume_reader)"
+
+# ---- OME-ZARR only path ----
+zarr_validate: "Experiment selected?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_err: "Show error and re-enable Start" {
+  style.fill: "#ffcccc"
+}
+
+zarr_override: "Build ecfg from UI settings and exported XML dimensions and wells"
+
+zarr_autotrig: "Auto-trigger checked?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_armed: "Writer Armed \u2014\nwait for ZEN to start experiment" {
+  style.fill: "#f5e6ff"
+}
+
+zarr_call: "Call stream_to_omezarr_with_config(ecfg) \u2014 same function as CLI" {
+  style.fill: "#e8daef"
+}
+
+zarr_trigexp: "Auto-trigger?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_grpc: "Create dedicated gRPC channel"
+zarr_stream: "Open monitor_all_experiments stream per source channel"
+zarr_exp: "Start experiment via API"
+zarr_first: "Wait for first frame"
+zarr_status: "Query live T,C,Z,S,M counts\n(exported XML is fallback)"
+zarr_map: "Build expected coordinate map\nin T,S,M,C,Z append order"
+zarr_loop: "Read frame and form (T,S,M,C,Z) key\nfrom FramePosition + subscription C" {
+  style.fill: "#e8daef"
+}
+
+zarr_valid: "Key in expected map?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_skip: "Skip unexpected frame"
+
+zarr_duplicate: "Coordinate already received?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_ignore: "Ignore duplicate frame"
+zarr_pending: "Capture S,M geometry and buffer raw frame or HCS scene plane"
+zarr_append: "Append consecutive frames or completed HCS scene planes"
+
+zarr_done: "All unique expected coordinates received?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_timeout: "Inactivity timeout?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_finish: "Drain pending frames, skip missing slots, close stream" {
+  style.fill: "#e8daef"
+}
+
+zarr_layout: "Explicit HCS plate?" {
+  shape: diamond
+  style.fill: "#FFE4B5"
+}
+
+zarr_hcs: "Finalize directly written HCS wells and row groups"
+zarr_scenes: "Group raw tiles by streamed S\nand identify each tile by M" {
+  style.fill: "#d4edda"
+}
+zarr_place: "Place from streamed XYZ and scale\nhigher M wins overlaps"
+zarr_series: "Advertise one TCZYX mosaic per scene\noptionally retain raw tiles"
+
+# ---- Common finish ----
+finish: on_experiment_finished {
+  style.fill: "#fff3cd"
+}
+
+progress_close: "Close any stale progress bar\n(_close_progress_bar)"
+buttons: "Show start button and hide stop button"
+cleanup: "Cancel status monitor and clear experiment ID"
+ready: "Ready for next acquisition"
+
+# ---- Connections ----
+start -> setup
+setup -> ui_mode_check
+
+ui_mode_check -> monitor_mode: true
+ui_mode_check -> auto_mode: false
+
+monitor_mode -> mode_select
+
+mode_select -> start_source: "Display only"
+mode_select -> zarr_validate: "OME-ZARR only"
+
+# Display only connections
+start_source -> start_napari: "napari start button"
+start_source -> start_zen: "ZEN Blue start"
+start_source -> stop_napari: "napari stop button"
+
+start_napari -> set_id
+set_id -> frames
+start_zen -> frames
+auto_mode -> frames
+stop_napari -> restructure
+
+frames -> first_frame
+first_frame -> clear_reset: Yes
+clear_reset -> cancel_restructure
+first_frame -> cancel_restructure: No
+
+cancel_restructure -> extract_frame_indices
+extract_frame_indices -> store_frame
+store_frame -> update_stream
+update_stream -> check_task
+check_task -> has_ui_id
+
+has_ui_id -> wait_status: Yes
+has_ui_id -> wait_timeout: No
+
+wait_status -> restructure
+wait_timeout -> no_frames_timeout
+no_frames_timeout -> restructure: Yes
+no_frames_timeout -> check_task: No
+
+restructure -> stream_false
+stream_false -> remove_stream
+remove_stream -> create_channels
+create_channels -> set_axes
+set_axes -> finish
+
+# OME-ZARR only connections
+zarr_validate -> zarr_err: No
+zarr_validate -> zarr_override: Yes
+zarr_override -> zarr_autotrig
+zarr_autotrig -> zarr_call: Yes
+zarr_autotrig -> zarr_armed: No
+zarr_armed -> zarr_call
+zarr_call -> zarr_grpc
+zarr_grpc -> zarr_stream
+zarr_stream -> zarr_trigexp
+zarr_trigexp -> zarr_exp: Yes
+zarr_trigexp -> zarr_first: No
+zarr_exp -> zarr_first
+zarr_first -> zarr_status
+zarr_status -> zarr_map
+zarr_map -> zarr_loop
+zarr_loop -> zarr_valid
+zarr_valid -> zarr_skip: No
+zarr_skip -> zarr_loop
+zarr_valid -> zarr_duplicate: Yes
+zarr_duplicate -> zarr_ignore: Yes
+zarr_ignore -> zarr_loop
+zarr_duplicate -> zarr_pending: No
+zarr_pending -> zarr_append
+zarr_append -> zarr_done
+zarr_done -> zarr_finish: Yes
+zarr_done -> zarr_timeout: No
+zarr_timeout -> zarr_loop: No
+zarr_timeout -> zarr_finish: Yes
+zarr_finish -> zarr_layout
+zarr_layout -> zarr_hcs: Yes
+zarr_layout -> zarr_scenes: "No, multiple S or M"
+zarr_layout -> finish: "No, single image"
+zarr_hcs -> finish
+zarr_scenes -> zarr_place
+zarr_place -> zarr_series
+zarr_series -> finish
+
+# Channel filter connections
+channel_filter -> channel_filter_update
+channel_filter_update -> channel_reader_restart
+
+# Common finish connections
+finish -> progress_close
+progress_close -> buttons
+buttons -> cleanup
+cleanup -> ready
+ready -> mode_select
