@@ -71,6 +71,50 @@ _PROGRESS_DESCRIPTIONS = (
 )
 
 
+def _resolve_streamed_z_spacing_um(
+    metadata_by_key: dict[tuple[int, int, int, int, int], ImageMetadata],
+    fallback_um: float,
+) -> float:
+    """Resolve Z spacing from streamed stage positions when available.
+
+    Stage positions are compared only within one scene, time point, tile, and
+    channel so absolute offsets between independent stacks cannot distort the
+    result. The XML-derived value remains the fallback for single-plane data
+    or streams without usable stage positions.
+    """
+    stacks: dict[tuple[int, int, int, int], list[tuple[int, float]]] = {}
+    for (
+        scene,
+        time_index,
+        tile,
+        z_index,
+        channel,
+    ), metadata in metadata_by_key.items():
+        stage_z_um = metadata.stage_z_um
+        if not np.isfinite(stage_z_um):
+            continue
+        stack_key = (scene, time_index, tile, channel)
+        stacks.setdefault(stack_key, []).append((z_index, stage_z_um))
+
+    spacing_candidates: list[float] = []
+    for stack in stacks.values():
+        ordered_planes = sorted(stack)
+        for (first_index, first_z), (
+            second_index,
+            second_z,
+        ) in itertools.pairwise(ordered_planes):
+            index_delta = second_index - first_index
+            if index_delta <= 0:
+                continue
+            spacing = abs(second_z - first_z) / index_delta
+            if np.isfinite(spacing) and spacing > 0:
+                spacing_candidates.append(spacing)
+
+    if not spacing_candidates:
+        return fallback_um
+    return float(np.median(spacing_candidates))
+
+
 class _ThrottledProgressEmitter:
     """Coalesce high-rate progress updates before they enter Qt's queue.
 
@@ -1215,17 +1259,14 @@ class StreamingViewer:
             try:
                 logger.debug(f"Starting experiment from UI: {exp_name}")
 
-                # Restart the pipeline reader so the new
-                # monitor_all_experiments request picks up the
-                # current channel filter from the UI.
                 pipeline = getattr(self.app, "pipeline", None)
-                if pipeline is not None:
-                    await pipeline.suspend_reader()
-                    await pipeline.resume_reader()
-
-                # Start the experiment via ZEN API (async operation)
                 assert self.connection is not None, "connection must be set before starting an experiment"
-                self.current_experiment_id = await self.connection.start_experiment(exp_name)
+                if pipeline is None:
+                    raise RuntimeError("Streaming pipeline is not available")
+
+                # Keep the perpetual all-experiments transport open, arm its
+                # client-side ID filter, and only then start acquisition.
+                self.current_experiment_id = await pipeline.start_targeted_experiment(exp_name)
                 logger.debug(f"Experiment started with ID: {self.current_experiment_id}")
 
                 self.signals.show_stop_button.emit(True)
@@ -1235,6 +1276,10 @@ class StreamingViewer:
                 self.status_monitor_task = asyncio.create_task(self._monitor_experiment_status())
 
             except Exception as e:
+                pipeline = getattr(self.app, "pipeline", None)
+                if pipeline is not None:
+                    pipeline.set_target_experiment(None)
+                self.current_experiment_id = None
                 logger.error(f"Failed to start experiment: {e}", exc_info=True)
                 # Reset button on error (use QTimer for thread safety)
                 self.signals.show_start_button.emit(True)
@@ -1445,6 +1490,9 @@ class StreamingViewer:
             self.status_monitor_task.cancel()
 
         self.current_experiment_id = None
+        pipeline = getattr(self.app, "pipeline", None)
+        if pipeline is not None:
+            pipeline.set_target_experiment(None)
         if not self.is_streaming:
             self._release_live_preview_option()
 
@@ -2183,12 +2231,16 @@ class StreamingViewer:
             f"Creating {len(self.unique_channels)} channel layers from channels: {sorted(self.unique_channels)}"
         )
 
-        # Build physical scale for (S, T, Z, Y, X).
-        # S/T have no physical step. Z spacing comes from the
-        # selected experiment XML when metadata is available; otherwise
-        # _z_spacing_um contains the INI fallback.
+        # Build physical scale for (S, T, Z, Y, X). S/T have no physical
+        # step. Prefer the stage-Z positions carried by the active stream;
+        # the selected experiment XML may be stale for ZEN-started runs.
         # XY pixel size is captured from the first streamed frame.
-        z_spacing_um = self._z_spacing_um
+        z_spacing_um = _resolve_streamed_z_spacing_um(
+            self.frame_metadata_by_key,
+            fallback_um=self._z_spacing_um,
+        )
+        self._z_spacing_um = z_spacing_um
+        logger.info("Final display Z spacing: %.6f µm", z_spacing_um)
         layer_scale = (
             1,
             1,

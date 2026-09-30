@@ -125,25 +125,62 @@ class ZENConnection:
             Exception: If experiment failed to load or start
 
         Note:
-            Once started, the experiment can be monitored via:
-            - streaming_service.monitor_experiment(exp_id)
-            - experiment_service.register_on_status_changed(exp_id)
+            The display pipeline uses ``exp_id`` to filter the perpetual
+            all-experiments pixel stream and to register for status updates.
         """
-        # Step 1: Load the experiment setup
-        exp_id = await self.load_experiment(experiment_name)
+        exp_id = await self.prepare_experiment(
+            experiment_name,
+            overwrite=overwrite,
+        )
+        await self.start_loaded_experiment(exp_id, experiment_name)
+        return exp_id
 
-        # Step 2: Handle overwrite if requested
+    async def prepare_experiment(
+        self,
+        experiment_name: str,
+        overwrite: bool = True,
+    ) -> str:
+        """Load an experiment and prepare its output before acquisition.
+
+        This separate preparation step exposes the experiment ID before the
+        acquisition starts, allowing the pixel reader to arm an ID filter
+        without missing initial frames.
+
+        Args:
+            experiment_name: Experiment setup name without ``.czexp``.
+            overwrite: Delete an existing output CZI when true.
+
+        Returns:
+            The loaded experiment ID assigned by ZEN.
+        """
+        experiment_id = await self.load_experiment(experiment_name)
         if overwrite:
             await self._cleanup_existing_experiment(experiment_name)
+        return experiment_id
 
-        # Step 3: Start experiment execution (acquisition begins)
-        logger.debug(f"Starting experiment execution: {experiment_name}")
+    async def start_loaded_experiment(
+        self,
+        experiment_id: str,
+        output_name: str,
+    ) -> None:
+        """Start a previously loaded experiment.
+
+        Args:
+            experiment_id: ID returned by :meth:`prepare_experiment`.
+            output_name: Output CZI name used by ZEN.
+        """
+        logger.debug("Starting experiment execution: %s", output_name)
         await self.experiment_service.start_experiment(
-            ExperimentServiceStartExperimentRequest(experiment_id=exp_id, output_name=experiment_name)
+            ExperimentServiceStartExperimentRequest(
+                experiment_id=experiment_id,
+                output_name=output_name,
+            )
         )
-
-        logger.debug(f"Experiment '{experiment_name}' started successfully with ID: {exp_id}")
-        return exp_id
+        logger.debug(
+            "Experiment '%s' started successfully with ID: %s",
+            output_name,
+            experiment_id,
+        )
 
     async def stop_experiment(self, experiment_id: str) -> None:
         """

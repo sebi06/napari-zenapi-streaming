@@ -217,7 +217,8 @@ frame_data: dict[tuple[int, ...], np.ndarray] = {}
 ### 3. Experiment Lifecycle
 ```python
 # Napari-started (has experiment_id)
-start_experiment() → monitor via experiment_id → stop when status="Finished"
+prepare_experiment() → arm FrameData.experiment_id filter
+   → start_loaded_experiment() → drain trailing frames → restructure
 
 # ZEN-started (no experiment_id)
 detect first frame → monitor via timeout → stop after no frames for X seconds
@@ -225,6 +226,15 @@ detect first frame → monitor via timeout → stop after no frames for X second
 # OME-ZARR only mode
 stream_to_omezarr_with_config(ecfg) → own gRPC channel → frame-count break
 ```
+
+Display mode deliberately keeps one `monitor_all_experiments()` transport
+instead of switching to `monitor_experiment()`: ZEN may close the targeted
+stream when status becomes finished before every pixel payload is delivered.
+For Napari-started runs, `StreamingPipeline` filters the global responses by
+`FrameData.experiment_id`. The ID filter must be armed after loading and before
+starting the experiment, retained during trailing-frame drain, and cleared
+only after final restructure. Never open both monitor RPCs concurrently; ZEN
+distributes frames between active consumers.
 
 ### 4. Configuration Precedence
 ```

@@ -20,19 +20,22 @@ sequenceDiagram
             alt Start from napari button
                 User->>NapariUI: Select experiment & click Start
                 NapariUI->>NapariUI: Hide start button / clear old layers
-                NapariUI->>ZENConnection: start_experiment(name)
+                NapariUI->>ZENConnection: prepare_experiment(name)
                 ZENConnection-->>NapariUI: experiment_id
+                NapariUI->>StreamPipeline: Filter FrameData by experiment_id
+                NapariUI->>ZENConnection: start_loaded_experiment(id, name)
                 NapariUI->>NapariUI: Show stop button
                 NapariUI->>StatusMonitor: Start status monitor task
-                StatusMonitor->>ZENConnection: monitor_all_experiments()
-                ZENConnection-->>StatusMonitor: Frame/status stream
-                Note over StatusMonitor: Polls is_experiment_running flag
+                StatusMonitor->>ZENConnection: register_on_status_changed(id)
+                ZENConnection-->>StatusMonitor: Experiment status stream
+                Note over StreamPipeline: Global pixel stream stays open for trailing frames
             else Start from ZEN Blue
                 User->>ZENConnection: Start experiment in ZEN Blue
                 Note over NapariUI: No current_experiment_id in UI
             end
 
             loop For each frame
+                StreamPipeline->>StreamPipeline: Reject nonmatching experiment IDs when filter is armed
                 StreamPipeline->>StreamPipeline: Extract FramePosition S,T,M,Z,C
                 StreamPipeline->>Viewer: add_frame(image, metadata)
 
@@ -76,6 +79,7 @@ sequenceDiagram
             end
 
             Viewer->>Viewer: Set axis labels (S,T,M,Z,Y,X)
+            Viewer->>StreamPipeline: Clear experiment filter after final restructure
 
             Note over NapariUI: Channel filter (Display only, any time)
             User->>NapariUI: Change Channel filter combo box

@@ -50,6 +50,7 @@ def extract_metadata(response: Any) -> ImageMetadata:
     scaling = frame_data.scaling
     stage_pos = frame_data.frame_stage_position
     frame_pos = frame_data.frame_position
+    frame_expID: str = frame_data.experiment_id
 
     # Create metadata object with converted units
     metadata = ImageMetadata(
@@ -59,9 +60,9 @@ def extract_metadata(response: Any) -> ImageMetadata:
         scaling_x_um=scaling.x * 1e6,
         scaling_y_um=scaling.y * 1e6,
         # Convert stage position from meters to micrometers
-        stage_x_um=stage_pos.x * 1e6,
-        stage_y_um=stage_pos.y * 1e6,
-        stage_z_um=stage_pos.z * 1e6,
+        stage_x_um=round(stage_pos.x * 1e6, 3),
+        stage_y_um=round(stage_pos.y * 1e6, 3),
+        stage_z_um=round(stage_pos.z * 1e6, 3),
         # Frame indices in multidimensional dataset
         frame_s=frame_pos.s,  # Scene/Region
         frame_m=frame_pos.m,  # Mosaic tile
@@ -72,7 +73,9 @@ def extract_metadata(response: Any) -> ImageMetadata:
     )
 
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"Extracted metadata {metadata.width}x{metadata.height} scaling {metadata.scaling_x_um}µm")
+        logger.debug(
+            f"Frame Metadata SMTCZ:metadata {metadata.width}x{metadata.height} scaling {metadata.scaling_x_um}µm"
+        )
 
     return metadata
 

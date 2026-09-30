@@ -205,18 +205,19 @@ Uses the full async streaming pipeline (`ZEN_pipeline.py`):
      frame count and uses pixel-stream inactivity as a safety fallback.
    - ZEN-started experiments: inactivity timeout (`ZEN_RESTRUCTURE_TIMEOUT`).
 
-**Experiment identity limitation:** Display mode subscribes to the global
-`monitor_all_experiments()` pixel stream, including when the experiment is
-started from Napari. The selected experiment's XML provides expected
-dimensions, but incoming frames are not matched to that experiment. For a
-ZEN-started run, Napari has no experiment ID and uses inactivity rather than
-the selected experiment's expected frame count to decide when to restructure.
-If another experiment streams at the same time, its frames may be mixed into
-the same display. Keep only one acquisition active and make sure the Napari
-selection matches the experiment running in ZEN. Starting from Napari provides
-an experiment ID for status monitoring, but does not isolate the pixel stream.
+**Experiment identity:** Display mode keeps one
+`monitor_all_experiments()` subscription open because the targeted ZEN stream
+can close when experiment status changes to finished, before trailing pixel
+payloads have arrived. For a Napari-started acquisition, the plugin loads the
+experiment first, arms a client-side filter for its `FrameData.experiment_id`,
+and only then starts acquisition. Frames from other experiments are ignored
+while that filter is active, including during trailing-frame drain. The filter
+is cleared after final restructure so later ZEN-started acquisitions remain
+discoverable. A ZEN-started run has no experiment ID known in advance and
+therefore continues to accept the global stream; keep only one such
+acquisition active at a time.
 
-4. **Post-processing** – The streaming layer is removed and each scene's M
+1. **Post-processing** – The streaming layer is removed and each scene's M
   tiles are placed from their streamed stage coordinates into per-channel
   5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
   the higher M index replace pixels from lower-M tiles.

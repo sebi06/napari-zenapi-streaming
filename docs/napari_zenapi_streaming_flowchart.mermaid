@@ -10,18 +10,23 @@ flowchart TD
     F -->|OME-ZARR only| ZARR_START[User clicks Start in napari]
 
     %% === Display only path ===
-    DISP_START -->|User clicks Start in napari| G[Start selected experiment via API]
+    DISP_START -->|User clicks Start in napari| G[Load and prepare selected experiment]
     DISP_START -->|User starts in ZEN Blue| H[Frames arrive without UI experiment ID]
     DISP_START -->|User clicks Stop in napari| STOP[Stop experiment via API, close progress bar, trigger restructure]
 
-    G --> G1[Store current_experiment_id]
-    G1 --> G2[Start status monitor task]
+    G --> G1[Arm FrameData experiment ID filter]
+    G1 --> GSTART[Start loaded experiment via API]
+    GSTART --> G2[Store ID and start status monitor task]
     G2 --> I[StreamingPipeline receives frames]
 
     E --> I
     H --> I
 
-    I --> J{First frame of new acquisition?}
+    I --> IFILTER{Target experiment ID armed?}
+    IFILTER -->|No, ZEN-started| J{First frame of new acquisition?}
+    IFILTER -->|Yes, ID matches| J
+    IFILTER -->|Yes, ID differs| IDROP[Ignore unrelated frame]
+    IDROP --> I
     J -->|Yes| J1[Clear existing layers and reset frame storage]
     J -->|No| K[Cancel pending restructure check task]
     J1 --> K
@@ -94,7 +99,7 @@ flowchart TD
     S[on_experiment_finished]
     S --> S0[Close any stale progress bar]
     S0 --> S1[Show start button and hide stop button]
-    S1 --> S2[Cancel status monitor and clear experiment ID]
+    S1 --> S2[Cancel status monitor and clear experiment ID and frame filter]
     S2 --> T[Ready for next acquisition]
 
     T --> D

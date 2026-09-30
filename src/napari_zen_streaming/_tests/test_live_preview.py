@@ -7,9 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from napari_zen_streaming.ZEN_config import ZENConfig
-from napari_zen_streaming.ZEN_ui import StreamingViewer
+from napari_zen_streaming.ZEN_ui import (
+    StreamingViewer,
+    _resolve_streamed_z_spacing_um,
+)
 
 
 class _RecordedSignal:
@@ -175,3 +179,21 @@ def test_post_restructure_straggler_does_not_freeze_option() -> None:
     assert not viewer.image_buffer
     assert viewer._run_live_latest is None
     assert not option_signal.calls
+
+
+def test_streamed_z_positions_override_stale_xml_spacing() -> None:
+    """ZEN-started stacks use physical spacing from their streamed frames."""
+    metadata_by_key = {}
+    for tile, z_origin in ((0, 12.0), (1, 40.0)):
+        for z_index in range(81):
+            key = (0, 0, tile, z_index, 0)
+            metadata_by_key[key] = SimpleNamespace(
+                stage_z_um=z_origin + z_index * 0.27,
+            )
+
+    spacing = _resolve_streamed_z_spacing_um(
+        metadata_by_key,
+        fallback_um=1.0,
+    )
+
+    assert spacing == pytest.approx(0.27)

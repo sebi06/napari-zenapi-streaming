@@ -21,12 +21,14 @@ User -> NapariUI: "Select operating mode"
 # ---- Display only path ----
 User -> NapariUI: "[Display only] Click Start in napari"
 App -> StreamPipeline: "Start streaming monitor"
-NapariUI -> ZENConnection: "start_experiment(name)"
+NapariUI -> ZENConnection: "prepare_experiment(name)"
 ZENConnection -> NapariUI: "experiment_id"
+NapariUI -> StreamPipeline: "Filter FrameData by experiment_id"
+NapariUI -> ZENConnection: "start_loaded_experiment(id, name)"
 NapariUI -> NapariUI: "Show stop button"
 NapariUI -> StatusMonitor: "Start status monitor task"
-StatusMonitor -> ZENConnection: "monitor_all_experiments()"
-ZENConnection -> StatusMonitor: "Frame/status stream"
+StatusMonitor -> ZENConnection: "register_on_status_changed(id)"
+ZENConnection -> StatusMonitor: "Experiment status stream"
 StatusMonitor -> StatusMonitor: "Poll is_experiment_running flag"
 
 User -> ZENConnection: "Optional: start experiment in ZEN Blue"
@@ -36,6 +38,7 @@ App -> ZENConnection: "start_experiment(config.exp_name)"
 ZENConnection -> App: "experiment_id"
 
 # Frame loop (Display only)
+StreamPipeline -> StreamPipeline: "Reject nonmatching experiment IDs when filter is armed"
 StreamPipeline -> StreamPipeline: "Extract FramePosition S,T,M,Z,C"
 StreamPipeline -> Viewer: "add_frame(image, metadata)"
 Viewer -> Viewer: "Clear old layers if first frame"
@@ -58,6 +61,7 @@ RestructureTask -> Viewer: "perform_restructure()"
 Viewer -> Viewer: "Remove 7D layer"
 Viewer -> Viewer: "Create 6D channel layers (S,T,M,Z,Y,X)"
 Viewer -> NapariUI: "on_experiment_finished()"
+NapariUI -> StreamPipeline: "Clear experiment filter"
 
 # Channel filter (Display only, any time)
 User -> NapariUI: "Change Channel filter combo box"
@@ -97,4 +101,4 @@ OmeZarr -> NapariUI: "Return zarr_path"
 
 # ---- Common finish ----
 NapariUI -> NapariUI: "_close_progress_bar()"
-NapariUI -> NapariUI: "Show start button and clear current_experiment_id"
+NapariUI -> NapariUI: "Show start button and clear experiment ID/filter"

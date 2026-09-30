@@ -3,12 +3,14 @@ Streaming pipeline for ZEN API data acquisition and processing.
 
 This module orchestrates the flow of microscopy image data from ZEN to Napari:
 1. Reader task: Pulls frames from ZEN API streaming service
-2. Queue: Buffers frames for processing
-3. Processor task: Processes frames and updates Napari viewer
+2. Experiment filter: Isolates napari-started acquisitions by frame ID
+3. Queue: Buffers frames for processing
+4. Processor task: Processes frames and updates Napari viewer
 
 The pipeline supports two modes:
 - Monitoring mode: Watches all experiments (ZEN-started)
-- Specific experiment: Monitors one experiment by ID (Napari-started)
+- Targeted mode: Keeps the global stream open but accepts only frames matching
+    the experiment ID loaded before a napari-started acquisition
 """
 
 import asyncio
@@ -87,6 +89,11 @@ class StreamingPipeline:
         # aclose() ZEN keeps distributing frames to the dead stream
         # and the standalone OME-ZARR writer only receives half of them.
         self._reader_iter: Any = None
+        self._reader_ready = asyncio.Event()
+
+        # Napari-started runs use the perpetual all-experiments transport but
+        # accept only frames carrying this ID. None preserves ZEN-started mode.
+        self._target_experiment_id: str | None = None
 
         # Processor task processes frames and updates viewer
         self.processor_task: asyncio.Task | None = None
@@ -161,7 +168,8 @@ class StreamingPipeline:
 
         Supports two streaming modes:
         1. Monitor all experiments (ZEN-started): Watches all running experiments
-        2. Monitor specific experiment (Napari-started): Watches one experiment by ID
+          2. Filter one experiment (Napari-started): Uses the global stream but
+              accepts only matching ``FrameData.experiment_id`` values
 
         The async iterator from ZEN API yields frames continuously until:
         - Experiment completes naturally (iterator exhausts)
@@ -203,6 +211,7 @@ class StreamingPipeline:
                 enable_raw_data=self.config.enable_raw_data,
             )
             self._reader_iter = self.connection.streaming_service.monitor_all_experiments(request).__aiter__()
+            self._reader_ready.set()
 
             # Read frames from ZEN API stream
             async for response in self._reader_iter:
@@ -210,6 +219,14 @@ class StreamingPipeline:
                 if self.stop_event.is_set():
                     logger.debug("Stop event detected - halting frame reader")
                     break
+
+                if not self._accepts_response(response):
+                    logger.debug(
+                        "Ignoring frame from experiment %s while targeting %s",
+                        response.frame_data.experiment_id,
+                        self._target_experiment_id,
+                    )
+                    continue
 
                 # Queue frame for processing
                 if self.queue.full():
@@ -239,6 +256,7 @@ class StreamingPipeline:
             logger.error(f"Error in frame reader: {e}", exc_info=True)
             raise
         finally:
+            self._reader_ready.clear()
             # Explicitly close the gRPC async iterator so ZEN Blue
             # de-registers this monitor_all_experiments consumer
             # immediately.  Cancelling the Python task alone does not
@@ -252,6 +270,54 @@ class StreamingPipeline:
                     await iter_ref.aclose()
                 logger.debug("gRPC reader iterator closed")
             logger.debug("Frame reader task stopped")
+
+    def set_target_experiment(self, experiment_id: str | None) -> None:
+        """Restrict accepted frames to one napari-started experiment ID."""
+        self._target_experiment_id = experiment_id
+        if experiment_id is None:
+            logger.info("Pixel stream experiment filter cleared")
+        else:
+            logger.info(
+                "Pixel stream filtered to experiment ID: %s",
+                experiment_id,
+            )
+
+    def _accepts_response(self, response: Any) -> bool:
+        """Return whether a streamed frame matches the active target."""
+        target = self._target_experiment_id
+        return target is None or response.frame_data.experiment_id == target
+
+    async def ensure_reader_ready(self) -> None:
+        """Ensure the perpetual all-experiments stream is armed."""
+        await self.resume_reader()
+        await self._reader_ready.wait()
+
+    async def start_targeted_experiment(
+        self,
+        experiment_name: str,
+        overwrite: bool = True,
+    ) -> str:
+        """Prepare, filter, and start one napari-triggered experiment.
+
+        The all-experiments stream is opened first for reliable trailing-frame
+        delivery. ZEN then loads the experiment, the client-side ID filter is
+        armed, and only then is acquisition started.
+        """
+        await self.ensure_reader_ready()
+        experiment_id = await self.connection.prepare_experiment(
+            experiment_name,
+            overwrite=overwrite,
+        )
+        self.set_target_experiment(experiment_id)
+        try:
+            await self.connection.start_loaded_experiment(
+                experiment_id,
+                experiment_name,
+            )
+        except Exception:
+            self.set_target_experiment(None)
+            raise
+        return experiment_id
 
     async def _process_frames(self) -> None:
         """
