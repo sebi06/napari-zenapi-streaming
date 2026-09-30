@@ -52,7 +52,6 @@ dependencies:
       - cztile
       - czitools
       - grpclib
-      - loguru
       - napari-brightness-contrast
       - napari-crop
       - napari-czitools

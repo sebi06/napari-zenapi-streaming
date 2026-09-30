@@ -1,5 +1,5 @@
 [project]
-name = "napari-zen-streaming"
+name = "napari-zenapi-streaming"
 version = "0.0.1"
 description = "ZEN API streaming plugin for napari"
 readme = "ReadMe.md"
@@ -30,7 +30,6 @@ dependencies = [
     "qtpy>=2.3.0",
     "numpy>=1.21.0",
     "qasync>=0.24.0",
-    "loguru>=0.7.0",
     "grpclib",
     "pydantic",
     "python-dotenv",
@@ -58,7 +57,7 @@ testing = [
 ]
 
 [project.entry-points."napari.manifest"]
-napari-zen-streaming = "napari_zen_streaming:napari.yaml"
+napari-zenapi-streaming = "napari_zen_streaming:napari.yaml"
 
 [project.urls]
 "Homepage" = "https://github.com/sebi06/napari-zenapi-streaming"
@@ -99,7 +98,7 @@ lint.select = [
     "SIM", # flake8-simplify
 ]
 lint.ignore = [
-    "E203", "W503", # Black-compatible formatting
+    "E203", # Black-compatible formatting
     "G004", # logging is using f-string
     "G201", # use .exception(...) instead of .error(...) in except block
     "E501", # line too long. let black handle this

@@ -42,22 +42,30 @@ import argparse
 import asyncio
 import contextlib
 import itertools
+import logging
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import dotenv
 import numpy as np
+
+# ome-writers
+import zarr
 
 # napari.utils.progress subclasses tqdm: shows in the napari activity dock
 # when a viewer is open; falls back to a tqdm terminal bar in CLI mode.
 # Used by stream_to_omezarr() (buffered CLI mode).
 from napari.utils import progress as napari_progress
-
-# ome-writers
-import zarr
-from ome_writers import AcquisitionSettings, Dimension, Plate, Position, create_stream
+from ome_writers import (
+    AcquisitionSettings,
+    Dimension,
+    Plate,
+    Position,
+    create_stream,
+)
 
 # ZEN API auto-generated stubs
 from zen_api.acquisition.v1beta import (
@@ -68,12 +76,13 @@ from zen_api.acquisition.v1beta import (
     PixelType,
 )
 
-from napari_zen_streaming.misc import initialize_zenapi, set_logging
+from napari_zen_streaming._logging import configure_logging
 from napari_zen_streaming._scene_geometry import (
     SceneGeometry,
     TileGeometry,
     calculate_scene_geometry,
 )
+from napari_zen_streaming.misc import initialize_zenapi
 from napari_zen_streaming.ZEN_omezarr import (
     ExperimentConfig,
     load_experiment_acquisition,
@@ -83,7 +92,7 @@ from napari_zen_streaming.ZEN_omezarr import (
     start_experiment,
 )
 
-logger = set_logging()
+logger = logging.getLogger(__name__)
 
 # Default data type for pixel streaming
 DEFAULT_DTYPE = np.dtype(np.uint16)
@@ -891,6 +900,8 @@ async def _stream_to_omezarr_connected(
 
         fd = response.frame_data
         fp = fd.frame_position
+        frame_expID = fd.experiment_id
+        logger.info(f"Received frame from experiment ID: {frame_expID}")
 
         # Extract 5-D acquisition coordinate of this frame.
         t = fp.t
@@ -909,7 +920,7 @@ async def _stream_to_omezarr_connected(
         if dtype is None:
             dtype = frame_dtype
             logger.info(
-                "Using runtime stream pixel type {} ({}).",
+                "Using runtime stream pixel type %s (%s).",
                 fd.pixel_data.pixel_type.name,
                 dtype,
             )
@@ -1433,13 +1444,13 @@ async def _stream_to_omezarr_with_config_connected(
         if dtype is None:
             dtype = frame_dtype
             logger.info(
-                "Using runtime stream pixel type {} ({}).",
+                "Using runtime stream pixel type %s (%s).",
                 fd.pixel_data.pixel_type.name,
                 dtype,
             )
             if dtype != configured_dtype:
                 logger.warning(
-                    "Configured dtype {} differs from runtime dtype {}; using the runtime value.",
+                    "Configured dtype %s differs from runtime dtype %s; " "using the runtime value.",
                     configured_dtype,
                     dtype,
                 )
@@ -1556,7 +1567,7 @@ async def _stream_to_omezarr_with_config_connected(
 
             if plate is not None:
                 logger.info(
-                    "OME-ZARR HCS layout enabled for wells: {}",
+                    "OME-ZARR HCS layout enabled for wells: %s",
                     ", ".join(dict.fromkeys(f"{position.plate_row}{position.plate_column}" for position in pos_coords)),
                 )
             total_expected = len(coord_to_linear)
@@ -1891,6 +1902,8 @@ async def _run_configured_experiment(ecfg: ExperimentConfig, inactivity_timeout:
 
 def main() -> None:
     """Entry point: parse arguments, run the appropriate streaming mode, and open the viewer."""
+    dotenv.load_dotenv(Path(__file__).parent / ".env")
+    configure_logging()
     args = parse_args()
 
     if args.experiment_config:

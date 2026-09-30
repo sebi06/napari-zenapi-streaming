@@ -13,33 +13,10 @@
 
 import configparser
 import ssl
-import sys
 from pathlib import Path
 
 from grpclib.client import Channel
-from loguru import logger
 from pydantic import ValidationError
-
-
-def set_logging():
-    """
-    Configures the logging settings for the application.
-    This function removes any existing loggers and sets up a new logger
-    that outputs to the standard output stream (sys.stdout). The log
-    messages are colorized and formatted to include the timestamp, log
-    level, and message.
-    Returns:
-        logger (Logger): The configured logger instance.
-    """
-
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        colorize=True,
-        format="<green>{time}s</green> - <level>{level}</level> - <level>{message}</level>",
-    )
-
-    return logger
 
 
 def initialize_zenapi(

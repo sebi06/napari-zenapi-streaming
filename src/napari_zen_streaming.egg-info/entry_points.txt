@@ -1,2 +1,2 @@
 [napari.manifest]
-napari-zen-streaming = napari_zen_streaming:napari.yaml
+napari-zenapi-streaming = napari_zen_streaming:napari.yaml

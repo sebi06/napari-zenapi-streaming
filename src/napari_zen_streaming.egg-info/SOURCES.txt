@@ -6,11 +6,10 @@ ReadMe.md
 config_example.ini
 experiment_streaming_config.ini
 pyproject.toml
+tox.ini
 .github/copilot-instructions.md
-.github/instructions/mermaid.instructions.md
 .github/workflows/test_and_deploy_pypi.yml
 .github/workflows/test_and_deploy_testpypi.yml
-docs/live_preview_performance_plan.md
 docs/napari_zenapi_streaming_flowchart.d2
 docs/napari_zenapi_streaming_flowchart.mermaid
 docs/napari_zenapi_streaming_flowchart.png
@@ -26,7 +25,6 @@ src/napari_zen_streaming/ZEN_stream2omezarr.py
 src/napari_zen_streaming/ZEN_ui.py
 src/napari_zen_streaming/ZEN_utils.py
 src/napari_zen_streaming/__init__.py
-src/napari_zen_streaming/_config_widget.py
 src/napari_zen_streaming/_scene_geometry.py
 src/napari_zen_streaming/_widget.py
 src/napari_zen_streaming/main.py

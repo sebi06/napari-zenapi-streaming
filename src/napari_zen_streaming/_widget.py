@@ -10,6 +10,8 @@ import dotenv
 from napari.qt.threading import thread_worker
 from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from napari_zen_streaming._logging import configure_logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +23,11 @@ def create_zen_widget():
     application in the background. The actual experiment selector UI is created
     by the StreamingViewer and added as a separate dock widget.
     """
+    # Load package settings before logging so ZEN_LOG_DIR takes effect.
+    env_file = Path(__file__).parent / ".env"
+    dotenv.load_dotenv(env_file, override=True)
+    configure_logging()
+
     # Create simple status widget
     widget = QWidget()
     layout = QVBoxLayout()
@@ -35,10 +42,6 @@ def create_zen_widget():
         """Initialize ZEN and run everything in worker thread."""
         from napari_zen_streaming.main import ZENApplication
         from napari_zen_streaming.ZEN_config import ZENConfig
-
-        # Load .env so environment variables are available to ZENConfig.from_env()
-        _env_file = Path(__file__).parent / ".env"
-        dotenv.load_dotenv(_env_file, override=True)
 
         try:
             # Create config

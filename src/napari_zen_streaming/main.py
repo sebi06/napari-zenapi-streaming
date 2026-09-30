@@ -15,6 +15,8 @@ import qasync
 from napari.qt.threading import thread_worker
 from qtpy import QtWidgets
 
+from napari_zen_streaming._logging import configure_logging
+
 # Add parent directory to path for direct script execution
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent))
@@ -30,17 +32,6 @@ except ImportError:
     from ZEN_pipeline import StreamingPipeline
     from ZEN_ui import StreamingViewer
 
-# Configure logging
-log_dir = Path(__file__).parent / "logging"
-log_dir.mkdir(exist_ok=True)
-log_file = log_dir / "zen_streaming.log"
-
-logging.basicConfig(
-    level=logging.INFO,
-    # level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler(log_file)],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -227,6 +218,7 @@ class ZENApplication:
 def main():
     dotenv.load_dotenv()
 
+    configure_logging()
     parser = argparse.ArgumentParser(description="ZEN API Streaming Application")
     parser.add_argument("--ui-start", choices=["true", "false"])
     parser.add_argument("--exp-name")

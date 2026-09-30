@@ -1,6 +1,6 @@
-# napari-zen-streaming
+# napari-zenapi-streaming
 
-`napari-zen-streaming` is a napari plugin and Python app that streams live
+`napari-zenapi-streaming` is a napari plugin and Python app that streams live
 microscopy image data from ZEISS ZEN Blue into napari via the ZEN API (gRPC).
 
 It supports two operating modes selectable from the plugin UI:
@@ -38,7 +38,6 @@ directly to OME-ZARR without napari.
   arrival order and XML TileRegion order are not used for assignment.
 - Thread-safe napari updates via Qt signals/slots.
 - Configurable startup and timeout behavior from `.env` or CLI.
-- Optional napari widget to generate `config.ini`.
 
 ## Repository layout
 
@@ -53,7 +52,6 @@ src/napari_zen_streaming/
   ZEN_omezarr.py       # OME-ZARR helpers, ExperimentConfig, viewer launchers
   ZEN_stream2omezarr.py # Standalone OME-ZARR streaming (CLI + plugin backend)
   _widget.py           # Napari plugin widget entrypoint
-  _config_widget.py    # Magicgui config.ini generator widget
   misc.py              # gRPC channel initialization from config.ini
   napari.yaml          # Plugin manifest
   .env                 # Environment variable overrides (local)
@@ -93,7 +91,10 @@ different environment, install the matching ZEISS ZEN API wheel separately.
 
 ### 1) `config.ini` (required)
 
-Copy `config_example.ini` to `config.ini` and update values.
+Copy `config_example.ini` to `config.ini` in the repository root and update
+the ZEN API host, certificate path, and control token. The plugin requires
+this file. For the napari plugin, set `ZEN_CONFIG_FILE` in the package-local
+`.env` to use a different path; for standalone runs, pass `--config-file`.
 
 ```ini
 [api]
@@ -120,12 +121,32 @@ You can define these in the `.env` file at `src/napari_zen_streaming/.env`.
 | `ZEN_RESTRUCTURE_TIMEOUT`              | Idle timeout (seconds) before final restructure in ZEN-started mode                    | `10.0`             |
 | `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` | Use the lightweight 2D latest-frame preview in Display mode                            | `true`             |
 | `ZEN_OUTPUT_DIR`                       | Default output directory for OME-ZARR files                                            | unset              |
+| `ZEN_LOG_DIR`                          | Directory containing the rotating `zen_streaming.log` file                             | platform default   |
+| `ZEN_LOG_LEVEL`                        | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`                  | `INFO`             |
 
-For the standalone app, explicit CLI flags override existing environment
-variables, then `.env` values, then defaults. The napari widget loads its
-package-local `.env` with `override=True`, so values there replace process
-environment variables when the file is present. Without it, the plugin uses
-the process environment and then defaults.
+The package-local `.env` supplies optional runtime settings such as the
+experiment name, startup mode, channel filter, display behavior, and the path
+to `config.ini`. It does not contain the ZEN API control token or certificate;
+those remain in the required `config.ini`.
+
+The standalone app loads `.env` without replacing variables already present in
+the process, then applies explicit CLI flags. Its precedence is CLI flags,
+process environment, `.env`, then code defaults. The napari plugin explicitly
+loads the package-local `.env` with `override=True`, so values set there take
+precedence over matching process environment variables. Variables absent from
+`.env` still fall back to the process environment and then code defaults.
+
+To place the logfile in a custom directory, set an absolute path in the
+package-local `.env`, for example:
+
+```dotenv
+ZEN_LOG_DIR=F:\Zen_Output\logs
+ZEN_LOG_LEVEL=DEBUG
+```
+
+Leave `ZEN_LOG_DIR=` empty or remove the line to use the platform-specific
+default documented in [Logging](#logging). Restart napari after changing the
+file because logging is configured when the plugin widget opens.
 
 ## Running
 
@@ -140,7 +161,6 @@ napari
 1. Open plugin widgets:
 
 - `Plugins > ZEN API Streaming > ZEN API Streaming`
-- `Plugins > ZEN API Streaming > Create ZEN Config File`
 
 ### Option B: Run as a module
 
@@ -184,6 +204,18 @@ Uses the full async streaming pipeline (`ZEN_pipeline.py`):
      gRPC pixel data arrives, the plugin then waits for the XML-derived unique
      frame count and uses pixel-stream inactivity as a safety fallback.
    - ZEN-started experiments: inactivity timeout (`ZEN_RESTRUCTURE_TIMEOUT`).
+
+**Experiment identity limitation:** Display mode subscribes to the global
+`monitor_all_experiments()` pixel stream, including when the experiment is
+started from Napari. The selected experiment's XML provides expected
+dimensions, but incoming frames are not matched to that experiment. For a
+ZEN-started run, Napari has no experiment ID and uses inactivity rather than
+the selected experiment's expected frame count to decide when to restructure.
+If another experiment streams at the same time, its frames may be mixed into
+the same display. Keep only one acquisition active and make sure the Napari
+selection matches the experiment running in ZEN. Starting from Napari provides
+an experiment ID for status monitoring, but does not isolate the pixel stream.
+
 4. **Post-processing** – The streaming layer is removed and each scene's M
   tiles are placed from their streamed stage coordinates into per-channel
   5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
@@ -353,8 +385,63 @@ python -m napari_zen_streaming.ZEN_stream2omezarr \
 
 ## Logging
 
-- Log file: `src/napari_zen_streaming/logging/zen_streaming.log`
+- Log file on Windows:
+  `C:\Users\<username>\AppData\Local\napari-zenapi-streaming\logs\zen_streaming.log`
+  (`%LOCALAPPDATA%\napari-zenapi-streaming\logs\zen_streaming.log`).
+  `AppData` is hidden by default in File Explorer.
+- Log file on Linux/macOS: `$XDG_STATE_HOME/napari-zenapi-streaming/logs/zen_streaming.log`
+  (or `~/.local/state/napari-zenapi-streaming/logs/zen_streaming.log`)
+- Set `ZEN_LOG_DIR` to override the log directory.
+- Logs rotate at 5 MB and retain three backups.
+- Messages are also written to the terminal that launched napari after the
+  plugin widget is opened.
+- Set `ZEN_LOG_LEVEL=DEBUG` in `.env` to include connection, pipeline, frame
+  processing, layer-update, and restructure details. The default `INFO` level
+  records only milestones, warnings, and errors.
 - Logging format: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
+
+To see live terminal records, launch napari from the Pixi workspace and keep
+that terminal open:
+
+```powershell
+cd F:\Pixi_Projects\zen_czi\zen-pixi-workspace
+pixi run start-napari
+```
+
+Logging starts when the **ZEN API Streaming** plugin widget is opened. A napari
+process launched from the Start menu or another detached GUI launcher cannot
+write records into an existing PowerShell terminal.
+
+On Windows, print the exact logfile location for the current user:
+
+```powershell
+$logFile = "$env:LOCALAPPDATA\napari-zenapi-streaming\logs\zen_streaming.log"
+$logFile
+```
+
+Open its directory in File Explorer:
+
+```powershell
+explorer.exe "$env:LOCALAPPDATA\napari-zenapi-streaming\logs"
+```
+
+If `ZEN_LOG_DIR` is not set, follow the default Windows logfile in a separate
+PowerShell terminal:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\napari-zenapi-streaming\logs\zen_streaming.log" -Wait
+```
+
+When `ZEN_LOG_DIR=F:\Zen_Output\logs`, use the configured location instead:
+
+```powershell
+Get-Content "F:\Zen_Output\logs\zen_streaming.log" -Wait
+```
+
+`Get-Content` prints the existing records and `-Wait` keeps the command
+running so new records appear as they are written. Press `Ctrl+C` to stop.
+If the 5 MB logfile rotates while this command is running, restart the command
+to follow the new active `zen_streaming.log` file.
 
 ## Architecture
 
@@ -427,7 +514,7 @@ Editable source files:
 - `FileNotFoundError` for `config.ini`: check `ZEN_CONFIG_FILE` path and working directory.
 - TLS or certificate issues: verify `cert_file` path and that the file is readable.
 - No experiments in dropdown: confirm ZEN API Gateway is running and token is valid.
-- Viewer not updating: check `src/napari_zen_streaming/logging/zen_streaming.log` for pipeline errors.
+- Viewer not updating: check `zen_streaming.log` in the user log directory described above for pipeline errors.
 - Restructure too early/late for ZEN-started runs: adjust `ZEN_RESTRUCTURE_TIMEOUT`.
 - **Progress bar stuck on "Streaming frames":** if ZEN stops an experiment
   without the plugin detecting it (e.g. network glitch), click **Stop** to
@@ -457,4 +544,4 @@ pip install -e .[dev]
 
 ## License
 
-GPL-3.0-or-later (see `LICENSE`).
+BSD 3-Clause (see `LICENSE`).

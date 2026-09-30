@@ -5,11 +5,6 @@ contributions:
     - id: napari-zenapi-streaming.start_streaming
       title: Start ZEN Streaming
       python_name: napari_zen_streaming._widget:create_zen_widget
-    - id: napari-zenapi-streaming.config_widget
-      python_name: napari_zen_streaming._config_widget:create_config_widget
-      title: ZEN Config Generator
   widgets:
     - command: napari-zenapi-streaming.start_streaming
       display_name: ZEN API Streaming
-    - command: napari-zenapi-streaming.config_widget
-      display_name: Create ZEN Config File

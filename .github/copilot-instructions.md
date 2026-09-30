@@ -1,8 +1,8 @@
-# GitHub Copilot Instructions for napari-zen-streaming
+# GitHub Copilot Instructions for napari-zenapi-streaming
 
 ## Project Overview
 
-**napari-zen-streaming** is a napari plugin and standalone CLI tool that streams live microscopy image data from ZEISS ZEN Blue software via the ZEN API (gRPC). It supports two operating modes selectable from the plugin UI:
+**napari-zenapi-streaming** is a napari plugin and standalone CLI tool that streams live microscopy image data from ZEISS ZEN Blue software via the ZEN API (gRPC). It supports two operating modes selectable from the plugin UI:
 
 | Mode | Description |
 | --- | --- |
@@ -178,7 +178,7 @@ def calculate_area(radius: float) -> float:
 
 ### Logging
 - Use Python's `logging` module for new code (not print)
-- Note: `misc.py` uses `loguru`; the rest of the codebase uses `logging`
+- Use the shared standard-library logging setup in `_logging.py`.
 - Log levels: DEBUG for verbose, INFO for milestones, ERROR for failures
 - Format: `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`
 - Log files stored in: `logging/zen_streaming.log`
@@ -249,7 +249,7 @@ Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensio
 - **ome-writers** - OME-ZARR streaming writer (AcquisitionSettings, create_stream)
 - **python-dotenv** - Environment variable loading
 - **pydantic** - Data validation
-- **loguru** - Logging (used in `misc.py`)
+- **logging** - Standard-library logging with terminal and rotating-file handlers
 
 ### ZEN API
 - **zen_api** - ZEISS ZEN API client (gRPC stubs)
@@ -312,7 +312,6 @@ napari-zenapi_streaming/
 │   ├── ZEN_omezarr.py             # OME-ZARR helpers, ExperimentConfig
 │   ├── ZEN_stream2omezarr.py      # OME-ZARR streaming (CLI + plugin)
 │   ├── _widget.py                 # Plugin widget entrypoint
-│   ├── _config_widget.py          # Config widget
 │   ├── misc.py                    # ZEN API init
 │   ├── napari.yaml                # Plugin manifest
 │   ├── .env                       # Environment variable overrides
@@ -416,7 +415,7 @@ OME-ZARR mode.
 ### Entry Point
 ```toml
 [project.entry-points."napari.manifest"]
-napari-zen-streaming = "napari_zen_streaming:napari.yaml"
+napari-zenapi-streaming = "napari_zen_streaming:napari.yaml"
 ```
 
 ### Plugin Manifest (napari.yaml)
@@ -424,7 +423,6 @@ Defines widgets and contributions to napari
 
 ### Widget Naming
 - `_widget.py` - Main plugin widget
-- `_config_widget.py` - Configuration widget
 
 ## Environment Setup
 
