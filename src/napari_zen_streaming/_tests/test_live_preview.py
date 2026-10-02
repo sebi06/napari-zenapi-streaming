@@ -104,6 +104,19 @@ def test_latest_preview_stores_all_frames_without_dense_history() -> None:
     np.testing.assert_array_equal(preview_image, np.full((2, 3), 2))
 
 
+def test_targeted_display_reports_received_frame_progress() -> None:
+    """Selected experiments report unique received frames against XML dimensions."""
+    viewer = _viewer_for_buffer_test(latest_only=True)
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer._selected_experiment_metadata = SimpleNamespace(time_points=1, channels=1, z_planes=3, tiles=1, scenes=1)
+    viewer._effective_channel_index = None
+    viewer.signals.update_progress = _RecordedSignal()
+
+    asyncio.run(viewer._process_buffer())
+
+    assert viewer.signals.update_progress.calls == [(1, 3), (3, 3)]
+
+
 def test_full_history_preview_still_builds_dense_array() -> None:
     """Unchecked preview retains the existing dense-history path."""
     viewer = _viewer_for_buffer_test(latest_only=False)
@@ -197,3 +210,35 @@ def test_streamed_z_positions_override_stale_xml_spacing() -> None:
     )
 
     assert spacing == pytest.approx(0.27)
+
+
+@pytest.mark.parametrize("mode, expected_spacing", [(0, 1.0), (1, 7.0)])
+def test_display_z_fallback_uses_selected_xml_only_for_targeted_mode(mode: int, expected_spacing: float) -> None:
+    """Passive ZEN watching must not borrow a selected setup's Z spacing."""
+    viewer = object.__new__(StreamingViewer)
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: mode)
+    viewer.image_layers = {}
+    viewer.image_layer = None
+    viewer.unique_channels = {0, 1}
+    viewer.frame_metadata_by_key = {}
+    viewer._z_spacing_um = 7.0
+    viewer.scaling_y_um = 0.5
+    viewer.scaling_x_um = 0.5
+    viewer.signals = SimpleNamespace(experiment_finished=_RecordedSignal())
+    layer_options: list[dict[str, object]] = []
+    viewer.viewer = SimpleNamespace(
+        layers=[],
+        add_image=lambda data, **kwargs: layer_options.append(kwargs),
+        dims=SimpleNamespace(axis_labels=(), ndim=5, set_current_step=lambda axis, step: None),
+    )
+    image = np.zeros((2, 3), dtype=np.uint8)
+    viewer._restructure_complete_slot(
+        {
+            0: {"data": image, "name": "Channel 1", "first_image": image},
+            1: {"data": image, "name": "Channel 2", "first_image": image},
+        }
+    )
+
+    assert len(layer_options) == 2
+    assert all(options["scale"][2] == expected_spacing for options in layer_options)
+    assert all(options["blending"] == "additive" for options in layer_options)

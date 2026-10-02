@@ -345,14 +345,16 @@ class StreamingViewer:
         self.dropdown_layout = QVBoxLayout(self.dropdown_widget)
 
         # Title label
-        label = QLabel("Available ZEN experiment setups:")
-        label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        self.experiment_label = QLabel("Available ZEN experiment setups:")
+        self.experiment_label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
 
         # Experiment selector dropdown
         self.dropdown = QComboBox()
         self.dropdown.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.dropdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.dropdown.currentTextChanged.connect(self._on_experiment_changed)
+        self.refresh_experiment_button = QPushButton("Update ZEN Experiment Data")
+        self.refresh_experiment_button.clicked.connect(self.refresh_selected_experiment_metadata)
 
         # Warning label about layer removal
         warning_label = QLabel("Starting a new Experiment from Napari or ZEN will remove existing layers!")
@@ -360,8 +362,7 @@ class StreamingViewer:
         warning_label.setWordWrap(True)
 
         # Start button
-        button_text = "Start Selected Experiment" if self.config.exp_started_by_ui else "Experiment Running..."
-        self.start_button = QPushButton(button_text)
+        self.start_button = QPushButton("Start Selected Experiment")
         self.start_button.setStyleSheet("background-color: #0040A6; color: white; border-radius: 6px; padding: 4px;")
         self.start_button.clicked.connect(self.on_start_clicked)
 
@@ -380,10 +381,12 @@ class StreamingViewer:
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(
             [
-                "Display only",
+                "Display: watch ZEN experiment",
+                "Display: start selected experiment",
                 "OME-ZARR only",
             ]
         )
+        self.mode_combo.setCurrentIndex(1 if self.config.exp_started_by_ui else 0)
 
         # Channel filter row (Display only mode)
         self.channel_filter_row = QWidget()
@@ -393,17 +396,10 @@ class StreamingViewer:
         self.channel_filter_combo = QComboBox()
         self.channel_filter_combo.setEditable(False)
         self.channel_filter_combo.addItem("All channels", None)
-        for i in range(32):
-            self.channel_filter_combo.addItem(str(i), i)
-        # Pre-select from config
-        if self.config.channel_index is not None:
-            idx = self.channel_filter_combo.findData(self.config.channel_index)
-            if idx >= 0:
-                self.channel_filter_combo.setCurrentIndex(idx)
+        self._pending_channel_index = self.config.channel_index
         self.channel_filter_combo.setToolTip(
-            "Filter the pixel stream to a single channel\n"
-            "index, or receive all channels.\n"
-            "Takes effect on the next experiment start."
+            "Filter the live stream to one channel, or receive all channels.\n"
+            "Channel labels start at 1; ZEN indices start at 0."
         )
         self.channel_filter_combo.currentIndexChanged.connect(self._on_channel_filter_changed)
         ch_layout.addWidget(ch_label)
@@ -547,12 +543,18 @@ class StreamingViewer:
         dim_form.addRow("Tiles (M):", self.label_tiles)
         dim_form.addRow("Scenes (S):", self.label_scenes)
         dim_form.addRow("Total frames:", self.label_total)
-        dim_form.addRow(self.chk_hcs_layout)
-        dim_form.addRow(self.chk_keep_source_tiles)
-        dim_form.addRow(self.chk_create_pyramid)
-        dim_form.addRow("Pyramid levels:", self.spin_pyramid_levels)
+
+        self.omezarr_options_panel = QWidget()
+        options_form = QFormLayout(self.omezarr_options_panel)
+        options_form.setContentsMargins(0, 0, 0, 0)
+        options_form.setSpacing(4)
+        options_form.addRow(self.chk_hcs_layout)
+        options_form.addRow(self.chk_keep_source_tiles)
+        options_form.addRow(self.chk_create_pyramid)
+        options_form.addRow("Pyramid levels:", self.spin_pyramid_levels)
 
         self.dim_panel.setVisible(False)
+        self.omezarr_options_panel.setVisible(False)
 
         # Recalculate total when metadata updates the dimensions.
         # Keep _z_spacing_um in sync so the restructure slot uses the
@@ -565,8 +567,9 @@ class StreamingViewer:
         self.auto_trigger_row = self.chk_auto_trigger
 
         # Add widgets to layout
-        self.dropdown_layout.addWidget(label)
+        self.dropdown_layout.addWidget(self.experiment_label)
         self.dropdown_layout.addWidget(self.dropdown)
+        self.dropdown_layout.addWidget(self.refresh_experiment_button)
         self.dropdown_layout.addWidget(warning_label)
         self.dropdown_layout.addWidget(self.start_button)
         self.dropdown_layout.addWidget(self.stop_button)
@@ -578,6 +581,7 @@ class StreamingViewer:
         self.dropdown_layout.addWidget(self.omezarr_dir_row)
         self.dropdown_layout.addWidget(self.omezarr_comp_row)
         self.dropdown_layout.addWidget(self.dim_panel)
+        self.dropdown_layout.addWidget(self.omezarr_options_panel)
         self.dropdown_layout.addStretch(1)
 
         # Hide OME-ZARR options initially ("Display only" is default)
@@ -598,6 +602,7 @@ class StreamingViewer:
         # Toggle OME-ZARR widget visibility on mode change
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.signals.update_progress.connect(self._update_progress_slot)
+        self._on_mode_changed(self.mode_combo.currentIndex())
 
         # Add dock widget to napari window
         self.viewer.window.add_dock_widget(self.dropdown_widget, name="Experiment Selector", area="right")
@@ -607,12 +612,17 @@ class StreamingViewer:
     @property
     def display_enabled(self) -> bool:
         """True when the stream should update the napari viewer."""
+        return self.mode_combo.currentIndex() != 2
+
+    @property
+    def watch_enabled(self) -> bool:
+        """True when displaying experiments started independently in ZEN."""
         return self.mode_combo.currentIndex() == 0
 
     @property
     def omezarr_enabled(self) -> bool:
         """True when the stream should be saved to OME-ZARR."""
-        return self.mode_combo.currentIndex() == 1
+        return self.mode_combo.currentIndex() == 2
 
     def restructure_button_clicked(self):
         logger.warning("User requested immediate restructure via button")
@@ -621,15 +631,23 @@ class StreamingViewer:
         """Show/hide OME-ZARR widgets based on the selected mode.
 
         Args:
-            index: Combo box index (0=Display only, 1=OME-ZARR only).
+            index: 0=watch ZEN, 1=start selected, 2=OME-ZARR.
         """
-        show_zarr = index == 1
+        show_zarr = index == 2
+        watch_zen = index == 0
+        self.experiment_label.setVisible(not watch_zen)
+        self.dropdown.setVisible(not watch_zen)
+        self.refresh_experiment_button.setVisible(not watch_zen)
+        self.start_button.setVisible(not watch_zen)
         self.auto_trigger_row.setVisible(show_zarr)
         self.channel_filter_row.setVisible(not show_zarr)
         self.chk_live_latest.setVisible(not show_zarr)
         self.omezarr_dir_row.setVisible(show_zarr)
         self.omezarr_comp_row.setVisible(show_zarr)
-        self.dim_panel.setVisible(show_zarr)
+        self.dim_panel.setVisible(not watch_zen and self._selected_experiment_metadata is not None)
+        self.omezarr_options_panel.setVisible(show_zarr)
+        if not show_zarr:
+            self._refresh_channel_filter()
         self._update_hcs_layout_option()
         # Keep the start button label consistent with the new mode
         if self.start_button.isEnabled():
@@ -729,6 +747,36 @@ class StreamingViewer:
         """
         self._z_spacing_um = value
 
+    def _refresh_channel_filter(self) -> None:
+        """Limit channel choices to the active Display workflow."""
+        selected = self._pending_channel_index
+        if selected is None:
+            selected = self.channel_filter_combo.currentData()
+        metadata = self._selected_experiment_metadata
+        if self.watch_enabled:
+            channel_count = 16
+        elif metadata is not None and metadata.experiment_name == self.dropdown.currentText():
+            channel_count = metadata.channels
+        else:
+            channel_count = 0
+
+        previous = self.channel_filter_combo.blockSignals(True)
+        try:
+            self.channel_filter_combo.clear()
+            self.channel_filter_combo.addItem("All channels", None)
+            for channel_index in range(channel_count):
+                self.channel_filter_combo.addItem(str(channel_index + 1), channel_index)
+            selected_index = self.channel_filter_combo.findData(selected)
+            self.channel_filter_combo.setCurrentIndex(max(0, selected_index))
+        finally:
+            self.channel_filter_combo.blockSignals(previous)
+
+        self._pending_channel_index = None
+        if self.channel_filter_combo.currentData() != self._effective_channel_index:
+            self._on_channel_filter_changed(self.channel_filter_combo.currentIndex())
+        if channel_count == 0:
+            self._pending_channel_index = selected
+
     def _on_channel_filter_changed(self, index: int) -> None:
         """Update the effective channel index and restart the reader.
 
@@ -738,8 +786,9 @@ class StreamingViewer:
         experiments where no Start click happens.
 
         Args:
-            index: Combo box index (0 = all, 1..32 = specific).
+            index: Combo box index (0 = all, otherwise a channel).
         """
+        self._pending_channel_index = None
         value = self.channel_filter_combo.currentData()
         self._effective_channel_index = value
         if value is None:
@@ -760,6 +809,8 @@ class StreamingViewer:
 
     def _expected_display_frame_count(self) -> int:
         """Return the expected unique frame count for Display mode."""
+        if self.watch_enabled:
+            return 0
         metadata = self._selected_experiment_metadata
         if metadata is None:
             return self._expected_total_frames or 0
@@ -870,6 +921,9 @@ class StreamingViewer:
                 self._close_progress_bar()
                 return
 
+            if current >= 0 and self.display_enabled and not self.watch_enabled and not self.is_streaming:
+                return
+
             # First frame detected: update button text so the user
             # knows that both ZEN and the pixel stream are active.
             if (
@@ -900,6 +954,8 @@ class StreamingViewer:
                     and getattr(self, "_progress_phase", "idle") != "writing"
                 ):
                     return
+                if self.display_enabled and not self.watch_enabled:
+                    self._close_progress_bar()
                 pbar_total = total if total > 0 else None
                 self._napari_progress = nap_progress(total=pbar_total)
                 self._napari_progress_bars.add(self._napari_progress)
@@ -995,8 +1051,20 @@ class StreamingViewer:
             experiment_name,
         )
 
+    async def _reload_metadata_for_start(self, experiment_name: str, request_id: int) -> Any:
+        """Fetch current XML for a run and publish it unless superseded."""
+        metadata = await self._load_selected_experiment_metadata(experiment_name)
+        if request_id == self._metadata_request_id:
+            self.signals.experiment_metadata_loaded.emit(metadata)
+        return metadata
+
     def _on_experiment_changed(self, experiment_name: str) -> None:
         """Reload XML-derived acquisition metadata after selection changes."""
+        self._selected_experiment_metadata = None
+        self._expected_total_frames = None
+        self.dim_panel.setVisible(False)
+        if self.mode_combo.currentIndex() == 1:
+            self._refresh_channel_filter()
         if not experiment_name or self.connection is None:
             return
 
@@ -1039,9 +1107,10 @@ class StreamingViewer:
         self.label_tiles.setValue(dimensions.tiles)
         self.label_scenes.setValue(dimensions.scenes)
         self._on_dim_changed()
-        self.dim_panel.setVisible(self.omezarr_enabled)
+        self.dim_panel.setVisible(not self.watch_enabled)
+        if self.mode_combo.currentIndex() == 1:
+            self._refresh_channel_filter()
 
-        self.chk_hcs_layout.setChecked(True)
         self._update_hcs_layout_option()
 
         logger.info(
@@ -1092,6 +1161,9 @@ class StreamingViewer:
         - Uses asyncio.run_coroutine_threadsafe for embedded mode
         - Uses asyncio.create_task for standalone mode
         """
+        if self.watch_enabled:
+            return
+
         # Get experiment name NOW while we're in main Qt thread
         exp_name = self.dropdown.currentText()
         if not exp_name:
@@ -1104,6 +1176,12 @@ class StreamingViewer:
         if self.app is None:
             logger.error("App reference not available")
             return
+
+        self._metadata_request_id += 1
+        request_id = self._metadata_request_id
+        self._selected_experiment_metadata = None
+        self._expected_total_frames = None
+        self.dim_panel.setVisible(False)
 
         if self.display_enabled:
             self._freeze_live_preview_option()
@@ -1124,6 +1202,7 @@ class StreamingViewer:
         # Reset on-the-fly zarr write state; apply UI widget overrides
         # to the cached ExperimentConfig.
         self._reset_zarr_state()
+        self.current_experiment_id = None
 
         # In OME-ZARR only mode the standalone writer handles
         # everything.  Set the guard flag EARLY (before any async
@@ -1176,14 +1255,16 @@ class StreamingViewer:
                 consumer (the pipeline) causes frame loss in both.
                 """
                 pipeline = getattr(self.app, "pipeline", None)
+
+                def record_experiment_id(experiment_id: str) -> None:
+                    self.current_experiment_id = experiment_id
+
                 try:
                     from napari_zen_streaming.ZEN_stream2omezarr import (
                         stream_to_omezarr_with_config,
                     )
 
-                    metadata = self._selected_experiment_metadata
-                    if metadata is None or metadata.experiment_name != exp_name:
-                        metadata = await self._load_selected_experiment_metadata(exp_name)
+                    metadata = await self._reload_metadata_for_start(exp_name, request_id)
                     ecfg = replace(
                         base_ecfg,
                         time_points=metadata.time_points,
@@ -1194,7 +1275,6 @@ class StreamingViewer:
                         scenes=metadata.scenes,
                         positions=list(metadata.positions),
                     )
-                    self.signals.experiment_metadata_loaded.emit(metadata)
 
                     # Cancel the pipeline's gRPC reader BEFORE opening
                     # the standalone writer's channel so ZEN has only
@@ -1219,6 +1299,7 @@ class StreamingViewer:
                     zarr_path = await stream_to_omezarr_with_config(
                         ecfg,
                         progress_callback=progress_emitter,
+                        on_experiment_started=record_experiment_id,
                     )
                     logger.info(f"OME-ZARR standalone complete: " f"{zarr_path}")
                     self.signals.open_omezarr.emit(str(zarr_path))
@@ -1228,6 +1309,7 @@ class StreamingViewer:
                         exc_info=True,
                     )
                 finally:
+                    self.current_experiment_id = None
                     self._standalone_zarr_active = False
                     # Restart the pipeline reader so Display mode
                     # works again for the next experiment.
@@ -1263,6 +1345,8 @@ class StreamingViewer:
                 assert self.connection is not None, "connection must be set before starting an experiment"
                 if pipeline is None:
                     raise RuntimeError("Streaming pipeline is not available")
+
+                await self._reload_metadata_for_start(exp_name, request_id)
 
                 # Keep the perpetual all-experiments transport open, arm its
                 # client-side ID filter, and only then start acquisition.
@@ -1307,6 +1391,11 @@ class StreamingViewer:
         """
         logger.debug("Stop button clicked - stopping experiment")
 
+        experiment_id = self.current_experiment_id
+        if experiment_id is None and self._standalone_zarr_active:
+            logger.warning("Stop requested before the OME-ZARR experiment started.")
+            return
+
         # Disable stop button immediately
         self.signals.show_stop_button.emit(False)
         self._close_progress_bar()
@@ -1319,16 +1408,16 @@ class StreamingViewer:
         async def stop_experiment_async():
             """ """
             try:
-                if self.current_experiment_id is None:
+                if experiment_id is None:
                     logger.warning("Stop requested but no active experiment ID — nothing to stop.")
                     self.signals.show_start_button.emit(True)
                     return
                 assert self.connection is not None, "connection must be set before stopping an experiment"
-                await self.connection.stop_experiment(self.current_experiment_id)
-                logger.debug(f"Experiment stopped with ID: {self.current_experiment_id}")
+                await self.connection.stop_experiment(experiment_id)
+                logger.debug(f"Experiment stopped with ID: {experiment_id}")
 
-                # Re-enable start button
-                self.signals.show_start_button.emit(True)
+                if not self._standalone_zarr_active:
+                    self.signals.show_start_button.emit(True)
 
             except Exception as e:
                 logger.error(f"Failed to stop experiment: {e}", exc_info=True)
@@ -1460,6 +1549,7 @@ class StreamingViewer:
                 (active / armed state).
         """
         self.start_button.setEnabled(enabled)
+        self.mode_combo.setEnabled(enabled)
         if enabled:
             # Restore the correct idle label for the current mode.
             self._sync_start_button_label()
@@ -1706,10 +1796,8 @@ class StreamingViewer:
                 self.scaling_x_um = first_metadata.scaling_x_um
                 self._update_frame_keys()
 
-                # Emit streaming progress in OME-ZARR mode
-                if self.omezarr_enabled:
-                    total = self._expected_total_frames or 0
-                    self.signals.update_progress.emit(1, total)
+                if self.display_enabled and not self.watch_enabled:
+                    self.signals.update_progress.emit(len(self.frame_data), self._expected_display_frame_count())
 
                 # The Qt slot chooses either a 2D latest-frame layer or the
                 # legacy 7D history layer from the frozen run option.
@@ -1730,12 +1818,10 @@ class StreamingViewer:
 
                 self._update_frame_keys()
 
-                # Emit streaming progress in OME-ZARR mode
-                if self.omezarr_enabled:
-                    total = self._expected_total_frames or 0
+                if self.display_enabled and not self.watch_enabled:
                     self.signals.update_progress.emit(
                         len(self.frame_data),
-                        total,
+                        self._expected_display_frame_count(),
                     )
 
                 if self.display_enabled:
@@ -2232,12 +2318,12 @@ class StreamingViewer:
         )
 
         # Build physical scale for (S, T, Z, Y, X). S/T have no physical
-        # step. Prefer the stage-Z positions carried by the active stream;
-        # the selected experiment XML may be stale for ZEN-started runs.
+        # step. Prefer stage-Z positions from the active stream; unrelated
+        # selected-experiment XML cannot supply a watch-mode fallback.
         # XY pixel size is captured from the first streamed frame.
         z_spacing_um = _resolve_streamed_z_spacing_um(
             self.frame_metadata_by_key,
-            fallback_um=self._z_spacing_um,
+            fallback_um=1.0 if self.watch_enabled else self._z_spacing_um,
         )
         self._z_spacing_um = z_spacing_um
         logger.info("Final display Z spacing: %.6f µm", z_spacing_um)
@@ -2262,6 +2348,7 @@ class StreamingViewer:
                     contrast_limits=(data["first_image"].min(), data["first_image"].max()),
                     colormap="gray",
                     scale=layer_scale,
+                    blending="additive",
                 ),
             )
 

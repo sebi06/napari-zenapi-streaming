@@ -3,14 +3,18 @@
 `napari-zenapi-streaming` is a napari plugin and Python app that streams live
 microscopy image data from ZEISS ZEN Blue into napari via the ZEN API (gRPC).
 
-It supports two operating modes selectable from the plugin UI:
+It supports three workflows selectable from the plugin UI:
 
-| Mode              | What it does                                                                                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Display only**  | Streams frames into napari for real-time visualization. Uses an async pipeline with sparse storage and post-acquisition restructure into per-channel scene mosaics.               |
-| **OME-ZARR only** | Writes frames directly to an OME-ZARR file on-the-fly. Bypasses the pipeline entirely and calls the same standalone function as the CLI script (`stream_to_omezarr_with_config`). |
+| Mode                                   | What it does                                                                                                                                                   |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Display: watch ZEN experiment**      | Passively displays an experiment started in ZEN Blue. Channel choices are All or 1-16, independent of the selected setup; its expected frame count is unknown. |
+| **Display: start selected experiment** | Starts the selected setup from napari and displays its frames. Channel choices match the setup's XML channel count.                                            |
+| **OME-ZARR only**                      | Writes frames directly to an OME-ZARR file on-the-fly using the standalone writer.                                                                             |
 
-In both modes experiments can be started from the napari UI or from ZEN Blue.
+Display workflows use the same live reader and restructure received frames into
+per-channel scene mosaics. Channel labels are 1-based; the ZEN API filter uses
+zero-based indices. The filter defaults to All channels when a previously
+selected channel is not available in the new mode or experiment.
 
 A **standalone CLI** (`ZEN_stream2omezarr.py`) is also available to stream
 directly to OME-ZARR without napari.
@@ -143,17 +147,17 @@ certificate path shown above is a Windows-local example, not a Linux path.
 
 You can define these in the `.env` file at `src/napari_zen_streaming/.env`.
 
-| Variable                               | Meaning                                                                                | Default            |
-| -------------------------------------- | -------------------------------------------------------------------------------------- | ------------------ |
-| `ZEN_EXP_NAME`                         | Experiment name used for auto-start mode                                               | `ZEN_API_overview` |
-| `ZEN_UI_START`                         | `true`: show selector UI and start manually; `false`: start `ZEN_EXP_NAME` immediately | `true`             |
-| `ZEN_CONFIG_FILE`                      | Path to config file                                                                    | `config.ini`       |
-| `ZEN_CHANNEL_INDEX`                    | gRPC channel index filter (integer). Leave empty or unset to receive **all channels**  | unset (all)        |
-| `ZEN_RESTRUCTURE_TIMEOUT`              | Idle timeout (seconds) before final restructure in ZEN-started mode                    | `10.0`             |
-| `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` | Use the lightweight 2D latest-frame preview in Display mode                            | `true`             |
-| `ZEN_OUTPUT_DIR`                       | Default output directory for OME-ZARR files                                            | unset              |
-| `ZEN_LOG_DIR`                          | Directory containing the rotating `zen_streaming.log` file                             | platform default   |
-| `ZEN_LOG_LEVEL`                        | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`                  | `INFO`             |
+| Variable                               | Meaning                                                                                      | Default            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------ |
+| `ZEN_EXP_NAME`                         | Initially selected experiment setup                                                          | `ZEN_API_overview` |
+| `ZEN_UI_START`                         | `true`: initially select napari-started Display; `false`: initially select passive ZEN watch | `true`             |
+| `ZEN_CONFIG_FILE`                      | Path to config file                                                                          | `config.ini`       |
+| `ZEN_CHANNEL_INDEX`                    | gRPC channel index filter (integer). Leave empty or unset to receive **all channels**        | unset (all)        |
+| `ZEN_RESTRUCTURE_TIMEOUT`              | Idle timeout (seconds) before final restructure in ZEN-started mode                          | `10.0`             |
+| `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` | Use the lightweight 2D latest-frame preview in Display mode                                  | `true`             |
+| `ZEN_OUTPUT_DIR`                       | Default output directory for OME-ZARR files                                                  | unset              |
+| `ZEN_LOG_DIR`                          | Directory containing the rotating `zen_streaming.log` file                                   | platform default   |
+| `ZEN_LOG_LEVEL`                        | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`                        | `INFO`             |
 
 The package-local `.env` supplies optional runtime settings such as the
 experiment name, startup mode, channel filter, display behavior, and the path
@@ -209,11 +213,25 @@ python -m napari_zen_streaming.main --ui-start true --exp-name ZEN_API_overview 
 
 ### Operating modes
 
-The plugin UI exposes a **Mode** dropdown with two options:
+The plugin UI exposes three stream modes. Connecting the plugin never starts
+an acquisition; only clicking Start in a start-capable mode does so.
 
-#### Display only (index 0)
+#### Display: watch ZEN experiment (index 0)
 
-Uses the full async streaming pipeline (`ZEN_pipeline.py`):
+The plugin waits for an experiment started independently in ZEN Blue. No
+selected setup or known frame count is assumed, and there is no Start button.
+The channel filter offers All channels or labels 1-16 (ZEN indices 0-15).
+
+#### Display: start selected experiment (index 1)
+
+The Start button loads and triggers the selected experiment via the ZEN API.
+Its XML dimensions are shown in the widget, and the channel filter offers All
+channels or exactly the channels available in that setup. Until metadata has
+loaded, only All channels is available. Changing the selected setup reloads
+both its dimensions and channel choices. Click **Update ZEN Experiment Data**
+below the selector to reload the current setup without changing the selection.
+
+Both Display modes use the full async streaming pipeline (`ZEN_pipeline.py`):
 
 1. **Streaming phase** – Frames are received via `monitor_all_experiments()`,
    processed in `ZEN_utils.process_frame()`, and stored in a sparse dict.
@@ -224,11 +242,10 @@ Uses the full async streaming pipeline (`ZEN_pipeline.py`):
   Every frame remains in sparse storage for final assembly. Uncheck the
   option to restore the more expensive 7D frame-history preview. The option
   is frozen during acquisition and re-enabled after scene assembly.
-2. **Channel filter** – A **Channel filter** combo box lets you select a
-   specific gRPC channel index (0–31) or receive all channels.  Changing the
-   filter immediately restarts the pipeline reader so the new filter is active
-   without a Start click.  The initial value comes from `ZEN_CHANNEL_INDEX`
-   in `.env`; leave it empty to receive all channels.
+2. **Channel filter** – Changing the filter immediately restarts the pipeline
+  reader. Labels are 1-based, while the gRPC request uses zero-based indices.
+  The initial value comes from `ZEN_CHANNEL_INDEX` in `.env`; leave it empty
+  to receive all channels. An out-of-range choice resets to All channels.
 3. **Completion detection** –
    - Napari-started experiments: the status monitor watches
      `is_experiment_running`. Because ZEN can report completion before all
@@ -253,7 +270,7 @@ acquisition active at a time.
   5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
   the higher M index replace pixels from lower-M tiles.
 
-#### OME-ZARR only (index 1)
+#### OME-ZARR only (index 2)
 
 Bypasses the pipeline entirely.  When **Start** is clicked:
 

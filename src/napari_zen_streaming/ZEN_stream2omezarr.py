@@ -52,6 +52,7 @@ from typing import Any
 import dotenv
 import numpy as np
 from grpclib.const import Cardinality
+from grpclib.exceptions import ProtocolError, StreamTerminatedError
 
 # ome-writers
 import zarr
@@ -733,14 +734,21 @@ async def _close_async_iterator(iterator: AsyncIterator[Any]) -> None:
         await close()
 
 
-async def _open_ready_channel_streams(
+async def _cancel_channel_stream(stream: Any) -> None:
+    """Reset a persistent monitor before grpclib waits for server trailers."""
+    try:
+        await stream.cancel()
+    except (ProtocolError, StreamTerminatedError):
+        pass
+
+
+async def _open_channel_streams(
     channel: Any,
     metadata: Any,
     source_channels: list[int],
-    timeout: float,
     resources: contextlib.AsyncExitStack,
 ) -> list[tuple[int, AsyncIterable[Any]]]:
-    """Subscribe to each channel and await server headers before acquisition."""
+    """Send channel subscriptions before acquisition begins."""
     streams = []
     for source_channel in source_channels:
         request = ExperimentStreamingServiceMonitorAllExperimentsRequest(
@@ -757,12 +765,9 @@ async def _open_ready_channel_streams(
             )
         )
         await stream.send_message(request, end=True)
+        resources.push_async_callback(_cancel_channel_stream, stream)
         streams.append(stream)
 
-    await asyncio.wait_for(
-        asyncio.gather(*(stream.recv_initial_metadata() for stream in streams)),
-        timeout=timeout,
-    )
     return list(enumerate(streams))
 
 
@@ -1174,6 +1179,7 @@ async def stream_to_omezarr_with_config(
     ecfg: ExperimentConfig,
     inactivity_timeout: float = _STATUS_POLL_TIMEOUT,
     progress_callback: Callable[[int, int], None] | None = None,
+    on_experiment_started: Callable[[str], None] | None = None,
 ) -> Path:
     """Stream ZEN pixel data into OME-ZARR using known dimensions from config.
 
@@ -1191,6 +1197,8 @@ async def stream_to_omezarr_with_config(
             ``-1`` = writing started (total is now known);
             ``-2`` = acquisition complete.
             When *None* a tqdm bar is displayed in the terminal instead.
+        on_experiment_started: Optional callback receiving the experiment ID
+            when an acquisition is started via ZEN API.
 
     Returns:
         Path to the created OME-ZARR directory.
@@ -1202,6 +1210,7 @@ async def stream_to_omezarr_with_config(
                 ecfg,
                 inactivity_timeout,
                 progress_callback,
+                on_experiment_started,
                 channel,
                 metadata,
                 resources,
@@ -1222,6 +1231,7 @@ async def _stream_to_omezarr_with_config_connected(
     ecfg: ExperimentConfig,
     inactivity_timeout: float,
     progress_callback: Callable[[int, int], None] | None,
+    on_experiment_started: Callable[[str], None] | None,
     channel: Any,
     metadata: Any,
     resources: contextlib.AsyncExitStack,
@@ -1246,13 +1256,12 @@ async def _stream_to_omezarr_with_config_connected(
     streaming_service = ExperimentStreamingServiceStub(channel=channel, metadata=metadata)
 
     # ----- open the pixel stream FIRST (before starting the experiment) -----
-    # This ensures no early frames are missed.  We always use
-    # monitor_all_experiments here so the stream is ready before the
-    # experiment_id exists.
+    # This ensures no early frames are missed. We use
+    # monitor_all_experiments because the experiment_id does not exist yet.
     source_channels = [ecfg.channel_index] if ecfg.channel_index is not None else list(range(max(1, num_c)))
     streams: list[tuple[int, AsyncIterable[Any]]]
     if ecfg.start_from_script:
-        streams = await _open_ready_channel_streams(channel, metadata, source_channels, inactivity_timeout, resources)
+        streams = await _open_channel_streams(channel, metadata, source_channels, resources)
     else:
         streams = [
             (
@@ -1287,6 +1296,12 @@ async def _stream_to_omezarr_with_config_connected(
         )
         logger.info(f"Experiment ID: {exp_id}")
         logger.info(f"CZI file will be saved to: {czi_path}")
+        if on_experiment_started is not None:
+            on_experiment_started(exp_id)
+        await asyncio.wait_for(
+            asyncio.gather(*(stream.recv_initial_metadata() for _, stream in streams)),
+            timeout=inactivity_timeout,
+        )
     else:
         logger.info(
             "Waiting for experiment to be started from ZEN UI. "

@@ -46,7 +46,7 @@ class _Checkbox:
 def test_hcs_option_shows_detected_b2_and_c3_wells() -> None:
     """Complete well metadata exposes an HCS option naming both wells."""
     viewer = object.__new__(StreamingViewer)
-    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 2)
     viewer.chk_hcs_layout = _Checkbox()
     viewer.chk_keep_source_tiles = _Checkbox()
     viewer._selected_experiment_metadata = SimpleNamespace(
@@ -75,10 +75,40 @@ def test_hcs_option_shows_detected_b2_and_c3_wells() -> None:
     assert not viewer.chk_keep_source_tiles.visible
 
 
+def test_metadata_refresh_preserves_unchecked_hcs_layout() -> None:
+    """Fresh XML metadata must not override the user's layout selection."""
+    viewer = object.__new__(StreamingViewer)
+    viewer.dropdown = SimpleNamespace(currentText=lambda: "B2")
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 2)
+    viewer.chk_hcs_layout = _Checkbox()
+    viewer.chk_hcs_layout.checked = False
+    viewer.chk_keep_source_tiles = _Checkbox()
+    viewer.spin_t = viewer.spin_c = viewer.spin_z = viewer.spin_z_spacing = SimpleNamespace(setValue=lambda value: None)
+    viewer.label_tiles = viewer.label_scenes = SimpleNamespace(setValue=lambda value: None)
+    viewer._on_dim_changed = lambda: None
+    viewer.dim_panel = SimpleNamespace(setVisible=lambda visible: None)
+    metadata = SimpleNamespace(
+        experiment_name="B2",
+        time_points=1,
+        channels=1,
+        z_planes=81,
+        z_spacing=0.27,
+        tiles=1,
+        scenes=1,
+        positions=({"scene_index": 0, "well_id": "B2", "well_row": 2, "well_column": 2},),
+    )
+
+    viewer._apply_experiment_metadata(metadata)
+
+    assert viewer.chk_hcs_layout.visible
+    assert viewer.chk_hcs_layout.enabled
+    assert not viewer.chk_hcs_layout.isChecked()
+
+
 def test_source_tile_option_shows_for_generic_mosaics() -> None:
     """Generic mosaics expose source retention and default to cleanup."""
     viewer = object.__new__(StreamingViewer)
-    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 2)
     viewer.chk_hcs_layout = _Checkbox()
     viewer.chk_keep_source_tiles = _Checkbox()
     viewer.chk_keep_source_tiles.checked = False

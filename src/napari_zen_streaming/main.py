@@ -67,7 +67,6 @@ class ZENApplication:
         """Initialize connection and experiment context."""
         self.connection = ZENConnection(self.config)
         self.experiment = ExperimentContext(self.connection, self.config)
-        await self.experiment.initialize()
 
         experiments = await self.connection.get_experiments()
         return experiments

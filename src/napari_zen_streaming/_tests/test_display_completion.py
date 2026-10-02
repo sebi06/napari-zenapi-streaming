@@ -28,6 +28,7 @@ def test_status_finish_waits_for_trailing_scene_tiles() -> None:
         scenes=2,
     )
     viewer._effective_channel_index = None
+    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
     viewer._expected_total_frames = 48
     viewer.config = SimpleNamespace(restructure_timeout=0.5)
     viewer.last_frame_time = time.time()

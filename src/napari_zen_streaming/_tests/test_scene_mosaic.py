@@ -19,7 +19,7 @@ from napari_zen_streaming.ZEN_stream2omezarr import (
     _assemble_scene_mosaics,
     _assemble_scene_plane,
     _build_position_layout,
-    _open_ready_channel_streams,
+    _open_channel_streams,
 )
 
 
@@ -72,10 +72,11 @@ def test_well_layout_can_be_written_as_hcs() -> None:
     assert len(positions) == 2
 
 
-def test_channel_subscriptions_wait_for_server_headers() -> None:
-    """All channel subscriptions must be acknowledged before auto-start."""
+def test_channel_subscriptions_can_start_before_server_headers() -> None:
+    """Subscriptions are sent before start even if headers require acquisition."""
     events = []
     ready = [asyncio.Event(), asyncio.Event()]
+    cancelled = [asyncio.Event(), asyncio.Event()]
 
     class Stream:
         def __init__(self, index):
@@ -85,7 +86,12 @@ def test_channel_subscriptions_wait_for_server_headers() -> None:
             return self
 
         async def __aexit__(self, *_args):
+            await asyncio.wait_for(cancelled[self.index].wait(), timeout=0.2)
             events.append(("closed", self.index))
+
+        async def cancel(self):
+            cancelled[self.index].set()
+            events.append(("cancelled", self.index))
 
         async def send_message(self, request, end):
             events.append(("sent", request.channel_index, end))
@@ -101,21 +107,20 @@ def test_channel_subscriptions_wait_for_server_headers() -> None:
 
     async def run():
         async with contextlib.AsyncExitStack() as resources:
-            opening = asyncio.create_task(
-                _open_ready_channel_streams(Channel(), {"authorization": "test"}, [0, 1], 1.0, resources)
+            streams = await asyncio.wait_for(
+                _open_channel_streams(Channel(), {"authorization": "test"}, [0, 1], resources),
+                timeout=1.0,
             )
-            await asyncio.sleep(0)
-            assert not opening.done()
-            ready[0].set()
-            await asyncio.sleep(0)
-            assert not opening.done()
-            ready[1].set()
-            streams = await opening
             assert [index for index, _stream in streams] == [0, 1]
+            events.append(("started",))
+            ready[0].set()
+            ready[1].set()
 
     asyncio.run(run())
     assert events[:2] == [("sent", 0, True), ("sent", 1, True)]
-    assert ("ready", 0) in events and ("ready", 1) in events
+    assert events[2] == ("started",)
+    assert all(("cancelled", index) in events for index in (0, 1))
+    assert all(("closed", index) in events for index in (0, 1))
 
 
 def test_well_layout_can_be_written_as_generic_scenes() -> None:
@@ -268,16 +273,24 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     )
     startup_events = []
 
-    async def open_ready_streams(*_args):
-        startup_events.append("ready")
-        return [(0, _StreamingService().monitor_all_experiments(None))]
+    class _SubscribedStream:
+        def __aiter__(self):
+            return _StreamingService().monitor_all_experiments(None)
+
+        async def recv_initial_metadata(self):
+            assert startup_events == ["sent", "started"]
+            startup_events.append("ready")
+
+    async def open_channel_streams(*_args):
+        startup_events.append("sent")
+        return [(0, _SubscribedStream())]
 
     async def start_experiment(**_kwargs):
-        assert startup_events == ["ready"]
+        assert startup_events == ["sent"]
         startup_events.append("started")
         return "experiment-1", "image.czi"
 
-    monkeypatch.setattr(stream_module, "_open_ready_channel_streams", open_ready_streams)
+    monkeypatch.setattr(stream_module, "_open_channel_streams", open_channel_streams)
     monkeypatch.setattr(stream_module, "start_experiment", start_experiment)
     monkeypatch.setattr(stream_module, "create_stream", _create_stream)
     monkeypatch.setattr(
@@ -316,10 +329,12 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         }
     ]
 
+    started_ids = []
     zarr_path = asyncio.run(
         stream_module.stream_to_omezarr_with_config(
             config,
             progress_callback=lambda _current, _total: None,
+            on_experiment_started=started_ids.append,
         )
     )
 
@@ -332,7 +347,8 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     assert metadata["position_x"] == 0.0
     assert metadata["position_y"] == 0.0
     assert output_stream.skipped == 0
-    assert startup_events == (["ready", "started"] if start_from_script else [])
+    assert startup_events == (["sent", "started", "ready"] if start_from_script else [])
+    assert started_ids == (["experiment-1"] if start_from_script else [])
     assert pyramid_calls == [
         (
             zarr_path,
