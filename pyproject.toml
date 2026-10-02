@@ -2,9 +2,9 @@
 name = "napari-zenapi-streaming"
 version = "0.0.1"
 description = "ZEN API streaming plugin for napari"
-readme = "ReadMe.md"
+readme = "README.md"
 requires-python = ">=3.11, <3.14"
-license = { text = "GPL-3.0-or-later" }
+license = "BSD-3-Clause"
 authors = [
     {name = "Krijn H. van der Steen", email = "k.h.vandersteen@umcutrecht.nl"},
     {name = "Sebastian Rhode", email = "sebastian.rhode@zeiss.com"}
@@ -19,13 +19,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 ]
 
 keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming"]
 
 dependencies = [
-    "napari[all]>=0.9.1",
+    "napari>=0.9.1",
     "magicgui>=0.7.0",
     "qtpy>=2.3.0",
     "numpy>=1.21.0",
@@ -77,6 +76,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 napari_zen_streaming = ["napari.yaml"]
+
+[tool.setuptools.exclude-package-data]
+napari_zen_streaming = [".env"]
 
 [tool.black]
 line-length = 79

@@ -96,3 +96,38 @@ def test_failed_start_clears_experiment_filter() -> None:
         asyncio.run(pipeline.start_targeted_experiment("Z Stack"))
 
     assert pipeline._target_experiment_id is None
+
+
+def test_stop_drains_queued_frames(monkeypatch) -> None:
+    """Shutdown finishes processing frames already accepted by the reader."""
+    processed = []
+    pipeline = object.__new__(StreamingPipeline)
+
+    class Viewer:
+        async def add_frame(self, image, metadata) -> None:
+            processed.append(image)
+
+    monkeypatch.setattr(
+        "napari_zen_streaming.ZEN_pipeline.process_frame",
+        lambda response, *_args: (response, None),
+    )
+    pipeline.viewer = Viewer()
+    pipeline.config = SimpleNamespace(pixel_dtype=None, display_dtype=None)
+    pipeline.frames_received = 2
+    pipeline.frames_processed = 0
+    pipeline.reader_task = None
+    pipeline.stop_event = asyncio.Event()
+    pipeline.queue = asyncio.Queue()
+    pipeline.queue.put_nowait("first")
+    pipeline.queue.put_nowait("second")
+
+    async def run() -> None:
+        pipeline.processor_task = asyncio.create_task(pipeline._process_frames())
+        try:
+            await asyncio.wait_for(pipeline.stop(), timeout=0.5)
+        finally:
+            pipeline.processor_task.cancel()
+            await asyncio.gather(pipeline.processor_task, return_exceptions=True)
+
+    asyncio.run(run())
+    assert processed == ["first", "second"]

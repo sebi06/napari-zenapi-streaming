@@ -7,7 +7,7 @@ It supports two operating modes selectable from the plugin UI:
 
 | Mode              | What it does                                                                                                                                                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Display only**  | Streams frames into napari for real-time visualization. Uses an async pipeline with sparse storage and post-acquisition restructure into per-channel layers.                      |
+| **Display only**  | Streams frames into napari for real-time visualization. Uses an async pipeline with sparse storage and post-acquisition restructure into per-channel scene mosaics.               |
 | **OME-ZARR only** | Writes frames directly to an OME-ZARR file on-the-fly. Bypasses the pipeline entirely and calls the same standalone function as the CLI script (`stream_to_omezarr_with_config`). |
 
 In both modes experiments can be started from the napari UI or from ZEN Blue.
@@ -18,15 +18,37 @@ directly to OME-ZARR without napari.
 ## Current status
 
 - Project phase: alpha / MVP
-- Primary OS target: Windows (ZEN Blue + ZEN API Gateway)
+- Primary OS target: Windows for ZEN Blue and the ZEN API Gateway
 - Python target: `>=3.11, <3.14`
+
+## Known limitations
+
+- ZEN Blue and the ZEN API Gateway are required for live acquisition. Automated
+  tests use simulated responses; they do not establish end-to-end throughput or
+  frame completeness on real hardware. ZEN Blue and its gateway run on Windows.
+- Running napari on a separate Linux host may be possible, but this remote
+  topology is experimental and not officially supported. It requires a fast,
+  reliable connection to the Windows gateway and expertise configuring gateway
+  certificates and trust for the remote client; it has not been validated here.
+- The OME-ZARR writer accepts only 2D `GRAY8` and `GRAY16` frames. Color pixel
+  types are not supported by that output path.
+- ZEN-started Display mode monitors the global pixel stream without a known
+  experiment ID; run only one acquisition at a time in this mode.
+- Display mode retains received frames in memory for final scene assembly.
+  Very large or long acquisitions may exceed available RAM; the standalone
+  unconfigured `--experiment` CLI mode also buffers the acquisition.
+- Out-of-order OME-ZARR frames use a bounded pending buffer. If the stream
+  stays incomplete until the inactivity timeout, missing positions are
+  skipped in the output rather than recovered from ZEN. Inspect acquisition
+  logs and frame counts before relying on an incomplete result.
 
 ## Features
 
 - Live frame ingestion through `ExperimentStreamingService` (gRPC).
 - **Display mode:** Buffered async pipeline (`reader → queue → processor`)
   for smooth UI updates, sparse frame storage, automatic post-acquisition
-  restructure from 7D streaming layer to 6D per-channel layers.
+  restructure from a 7D streaming layer to 5D `S,T,Z,Y,X` scene mosaics
+  per channel (merging the `M` tiles spatially).
 - **OME-ZARR mode:** Dedicated gRPC channel, tight read loop, on-the-fly
   writes via `ome-writers`. Identical code path for both plugin and CLI.
 - Acquisition dimensions and Z spacing are derived automatically from the
@@ -84,8 +106,12 @@ conda activate zenapi-napari
 pip install -e .
 ```
 
-The Conda environment includes the `zen_api-2026.05.1` wheel. When using a
-different environment, install the matching ZEISS ZEN API wheel separately.
+The plugin requires the ZEISS `zen_api` wheel, which is not a PyPI dependency.
+Install a compatible wheel from an authorized ZEISS distribution before using
+the plugin. Do not commit the wheel to this repository without confirming
+redistribution rights. The wheel URL in the Conda environment manifest is
+currently unavailable (HTTP 404); update it before using that installation
+route.
 
 ## Configuration
 
@@ -107,6 +133,11 @@ control-token = your-control-token
 host = 127.0.0.1
 port = 5280
 ```
+
+The loopback addresses above assume napari runs on the same Windows host as
+ZEN Blue. A remote client needs reachable control and image-streaming hosts
+and a certificate configuration appropriate to the gateway hostname. The
+certificate path shown above is a Windows-local example, not a Linux path.
 
 ### 2) Environment variables (optional)
 
@@ -462,7 +493,8 @@ ZEN Blue  ──gRPC──▶  StreamingPipeline  ──queue──▶  Processo
                                                        │
                                               ┌────────▼────────────┐
                                               │ perform_restructure │
-                                              │  7D → STZYX mosaic │
+                                              │  7D → 5D STZYX     │
+                                              │ per-channel mosaic │
                                               └─────────────────────┘
 ```
 
@@ -473,17 +505,17 @@ ZEN Blue  ──gRPC──▶  stream_to_omezarr_with_config()
                        (dedicated gRPC channel)
                        │
                        ├─ open one pixel stream per selected source channel
-                       ├─ start experiment
+                       ├─ optionally start experiment (auto-trigger)
                        ├─ first frame: live T/C/Z/S/M status
                        ├─ each frame: key = (T,S,M,C,Z)
                        │    ├─ reject unexpected or duplicate key
-                         │    ├─ generic: buffer by raw linear slot
-                         │    └─ HCS: buffer M tiles for one T/S/C/Z plane
-                         │         ├─ merge tiles from XYZ and pixel scale
-                         │         └─ append one final scene plane
+                       │    ├─ generic: buffer by raw linear slot
+                       │    └─ HCS: buffer M tiles for one T/S/C/Z plane
+                       │         ├─ merge tiles from XYZ and pixel scale
+                       │         └─ append one final scene plane
                        ├─ complete unique key set or inactivity timeout
                        ├─ drain pending frames and skip missing slots
-                         └─ generic only: finalize S/M tiles
+                       └─ generic only: finalize S/M tiles
                            ├─ group by FramePosition.s
                            ├─ identify tile by FramePosition.m
                            ├─ place from streamed XYZ and pixel scale
@@ -537,6 +569,9 @@ pip install -e .[dev]
 
 - Format settings are defined in `pyproject.toml` (Black, line length 79).
 - Current automated tests are minimal (`src/napari_zen_streaming/_tests`).
+- CI requires a repository secret named `ZEN_API_WHEEL_URL` pointing to an
+  authorized, reachable `zen_api` wheel. Test jobs fail explicitly without it;
+  forked pull requests cannot use repository secrets by default.
 
 ## Authors
 

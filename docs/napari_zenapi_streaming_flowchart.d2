@@ -18,7 +18,7 @@ monitor_mode: "Create selector UI and populate experiments" {
   style.fill: "#e1f5ff"
 }
 
-auto_mode: "Auto-start configured experiment and monitor its ID" {
+auto_mode: "Auto-start configured experiment and monitor global frames" {
   style.fill: "#ffe1e1"
 }
 
@@ -73,8 +73,8 @@ restructure: perform_restructure {
 
 stream_false: "Set is_streaming false"
 remove_stream: "Remove streaming layer"
-create_channels: "Create 6D layer per channel (STMZYX)"
-set_axes: "Set axis labels S,T,M,Z,Y,X"
+create_channels: "Merge M tiles into one 5D STZYX mosaic per channel"
+set_axes: "Set axis labels S,T,Z,Y,X"
 
 # Channel filter (Display only, any time)
 channel_filter: "Channel filter combo box\n(0\u201331 or All channels)" {

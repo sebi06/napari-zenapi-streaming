@@ -1,10 +1,12 @@
 """Integration tests for coordinate-based scene mosaic finalization."""
 
 import asyncio
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import zarr
 
 import napari_zen_streaming.ZEN_stream2omezarr as stream_module
@@ -17,6 +19,7 @@ from napari_zen_streaming.ZEN_stream2omezarr import (
     _assemble_scene_mosaics,
     _assemble_scene_plane,
     _build_position_layout,
+    _open_ready_channel_streams,
 )
 
 
@@ -69,6 +72,52 @@ def test_well_layout_can_be_written_as_hcs() -> None:
     assert len(positions) == 2
 
 
+def test_channel_subscriptions_wait_for_server_headers() -> None:
+    """All channel subscriptions must be acknowledged before auto-start."""
+    events = []
+    ready = [asyncio.Event(), asyncio.Event()]
+
+    class Stream:
+        def __init__(self, index):
+            self.index = index
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            events.append(("closed", self.index))
+
+        async def send_message(self, request, end):
+            events.append(("sent", request.channel_index, end))
+
+        async def recv_initial_metadata(self):
+            await ready[self.index].wait()
+            events.append(("ready", self.index))
+
+    class Channel:
+        def request(self, _route, _cardinality, _request_type, _response_type, *, metadata):
+            assert metadata == {"authorization": "test"}
+            return Stream(len([event for event in events if event[0] == "sent"]))
+
+    async def run():
+        async with contextlib.AsyncExitStack() as resources:
+            opening = asyncio.create_task(
+                _open_ready_channel_streams(Channel(), {"authorization": "test"}, [0, 1], 1.0, resources)
+            )
+            await asyncio.sleep(0)
+            assert not opening.done()
+            ready[0].set()
+            await asyncio.sleep(0)
+            assert not opening.done()
+            ready[1].set()
+            streams = await opening
+            assert [index for index, _stream in streams] == [0, 1]
+
+    asyncio.run(run())
+    assert events[:2] == [("sent", 0, True), ("sent", 1, True)]
+    assert ("ready", 0) in events and ("ready", 1) in events
+
+
 def test_well_layout_can_be_written_as_generic_scenes() -> None:
     """The same wells remain generic positions when HCS is not selected."""
     positions, plate = _build_position_layout(
@@ -110,9 +159,11 @@ def test_assemble_scene_plane_merges_tiles_by_coordinates() -> None:
     assert np.all(mosaic[:, 3:] == 4)
 
 
+@pytest.mark.parametrize("start_from_script", [False, True])
 def test_configured_hcs_stream_writes_merged_scene_directly(
     tmp_path: Path,
     monkeypatch,
+    start_from_script: bool,
 ) -> None:
     """HCS streaming writes one merged plane without a tile-store rewrite."""
     frames = []
@@ -215,6 +266,19 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         "ExperimentStreamingServiceStub",
         lambda **_kwargs: _StreamingService(),
     )
+    startup_events = []
+
+    async def open_ready_streams(*_args):
+        startup_events.append("ready")
+        return [(0, _StreamingService().monitor_all_experiments(None))]
+
+    async def start_experiment(**_kwargs):
+        assert startup_events == ["ready"]
+        startup_events.append("started")
+        return "experiment-1", "image.czi"
+
+    monkeypatch.setattr(stream_module, "_open_ready_channel_streams", open_ready_streams)
+    monkeypatch.setattr(stream_module, "start_experiment", start_experiment)
     monkeypatch.setattr(stream_module, "create_stream", _create_stream)
     monkeypatch.setattr(
         stream_module,
@@ -239,6 +303,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     )
 
     config = _experiment_config(use_hcs_layout=True)
+    config.start_from_script = start_from_script
     config.output_dir = str(tmp_path)
     config.scenes = 1
     config.pyramid_levels = 2
@@ -267,6 +332,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     assert metadata["position_x"] == 0.0
     assert metadata["position_y"] == 0.0
     assert output_stream.skipped == 0
+    assert startup_events == (["ready", "started"] if start_from_script else [])
     assert pyramid_calls == [
         (
             zarr_path,

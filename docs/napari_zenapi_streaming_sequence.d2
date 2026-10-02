@@ -59,7 +59,7 @@ RestructureTask -> Viewer: "perform_restructure()"
 
 # Restructure output (Display only)
 Viewer -> Viewer: "Remove 7D layer"
-Viewer -> Viewer: "Create 6D channel layers (S,T,M,Z,Y,X)"
+Viewer -> Viewer: "Merge M tiles into 5D channel mosaics (S,T,Z,Y,X)"
 Viewer -> NapariUI: "on_experiment_finished()"
 NapariUI -> StreamPipeline: "Clear experiment filter"
 

@@ -329,13 +329,13 @@ class StreamingPipeline:
         3. Send to viewer for display
         4. Mark queue item as done
 
-        Runs continuously until stop_event is set.
+        Runs until shutdown is requested and queued frames are processed.
         Errors in individual frame processing are logged but don't stop the pipeline.
         """
         logger.debug("Starting frame processor task")
 
         try:
-            while not self.stop_event.is_set():
+            while not self.stop_event.is_set() or not self.queue.empty():
                 try:
                     # Wait for frame with timeout to periodically check stop event
                     response = await asyncio.wait_for(self.queue.get(), timeout=0.1)

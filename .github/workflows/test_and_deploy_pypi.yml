@@ -13,6 +13,9 @@ jobs:
         name: ${{ matrix.platform }} py${{ matrix.python-version }}
         runs-on: ${{ matrix.platform }}
         timeout-minutes: 30
+        env:
+            QT_QPA_PLATFORM: offscreen
+            AIOCP_MAX_WORKERS: "1"
         strategy:
             fail-fast: false
             matrix:
@@ -40,21 +43,26 @@ jobs:
             - name: Install dependencies
               run: |
                   python -m pip install --upgrade pip
-                  python -m pip install -e .[testing] build
+                  python -m pip install -e .[testing] build ruff
 
-            - name: Set environment variables
+            - name: Install ZEN API wheel
+              shell: bash
+              env:
+                  ZEN_API_WHEEL_URL: ${{ secrets.ZEN_API_WHEEL_URL }}
               run: |
-                  echo "QT_QPA_PLATFORM=offscreen" >> $GITHUB_ENV
-                  echo "AIOCP_MAX_WORKERS=1" >> $GITHUB_ENV
+                  if [[ -z "$ZEN_API_WHEEL_URL" ]]; then
+                    echo "Configure the ZEN_API_WHEEL_URL secret with an authorized wheel URL."
+                    exit 1
+                  fi
+                  python -m pip install "$ZEN_API_WHEEL_URL"
 
-            - name: Run tests (allow empty test suite)
+            - name: Check Python correctness
+              run: python -m ruff check --select E4,E7,E9,F src/napari_zen_streaming
+
+            - name: Run tests
               uses: aganders3/headless-gui@v2
               with:
-                  run: >-
-                      python -c "import subprocess,sys; rc=subprocess.call([sys.executable,
-                      '-m','pytest','-q','src/napari_zen_streaming/_tests']);
-                      print('No tests collected in src/napari_zen_streaming/_tests'
-                      if rc==5 else ''); sys.exit(0 if rc in (0,5) else rc)"
+                  run: python -m pytest -q src/napari_zen_streaming/_tests
 
             - name: Verify package builds
               run: python -m build --sdist --wheel --outdir dist/ci
@@ -84,4 +92,5 @@ jobs:
                   TWINE_PASSWORD: ${{ secrets.TWINE_API_KEY }}
               run: |
                   python -m build .
+                  twine check dist/*
                   twine upload dist/*

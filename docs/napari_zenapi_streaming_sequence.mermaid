@@ -74,11 +74,11 @@ sequenceDiagram
             Viewer->>Viewer: Remove 7D streaming layer
 
             loop For each channel
-                Viewer->>Viewer: Build 6D array (S,T,M,Z,Y,X)
+                Viewer->>Viewer: Merge M tiles into 5D mosaic (S,T,Z,Y,X)
                 Viewer->>Viewer: Create channel layer
             end
 
-            Viewer->>Viewer: Set axis labels (S,T,M,Z,Y,X)
+            Viewer->>Viewer: Set axis labels (S,T,Z,Y,X)
             Viewer->>StreamPipeline: Clear experiment filter after final restructure
 
             Note over NapariUI: Channel filter (Display only, any time)
@@ -145,7 +145,7 @@ sequenceDiagram
     else ZEN_UI_START=false (auto-start mode)
         App->>ZENConnection: start_experiment(config.exp_name)
         ZENConnection-->>App: experiment_id
-        App->>StreamPipeline: monitor_experiment(experiment_id)
+        App->>StreamPipeline: monitor_all_experiments() global pixel stream
         Note over NapariUI: No UI-start status monitor task
     end
 

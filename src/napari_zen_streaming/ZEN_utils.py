@@ -50,7 +50,6 @@ def extract_metadata(response: Any) -> ImageMetadata:
     scaling = frame_data.scaling
     stage_pos = frame_data.frame_stage_position
     frame_pos = frame_data.frame_position
-    frame_expID: str = frame_data.experiment_id
 
     # Create metadata object with converted units
     metadata = ImageMetadata(

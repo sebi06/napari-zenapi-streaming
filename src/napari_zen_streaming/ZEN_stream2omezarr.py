@@ -51,6 +51,7 @@ from typing import Any
 
 import dotenv
 import numpy as np
+from grpclib.const import Cardinality
 
 # ome-writers
 import zarr
@@ -72,6 +73,7 @@ from zen_api.acquisition.v1beta import (
     ExperimentServiceGetStatusRequest,
     ExperimentServiceStub,
     ExperimentStreamingServiceMonitorAllExperimentsRequest,
+    ExperimentStreamingServiceMonitorAllExperimentsResponse,
     ExperimentStreamingServiceStub,
     PixelType,
 )
@@ -731,6 +733,39 @@ async def _close_async_iterator(iterator: AsyncIterator[Any]) -> None:
         await close()
 
 
+async def _open_ready_channel_streams(
+    channel: Any,
+    metadata: Any,
+    source_channels: list[int],
+    timeout: float,
+    resources: contextlib.AsyncExitStack,
+) -> list[tuple[int, AsyncIterable[Any]]]:
+    """Subscribe to each channel and await server headers before acquisition."""
+    streams = []
+    for source_channel in source_channels:
+        request = ExperimentStreamingServiceMonitorAllExperimentsRequest(
+            channel_index=source_channel,
+            enable_raw_data=False,
+        )
+        stream = await resources.enter_async_context(
+            channel.request(
+                "/zen_api.acquisition.v1beta.ExperimentStreamingService/MonitorAllExperiments",
+                Cardinality.UNARY_STREAM,
+                type(request),
+                ExperimentStreamingServiceMonitorAllExperimentsResponse,
+                metadata=metadata,
+            )
+        )
+        await stream.send_message(request, end=True)
+        streams.append(stream)
+
+    await asyncio.wait_for(
+        asyncio.gather(*(stream.recv_initial_metadata() for stream in streams)),
+        timeout=timeout,
+    )
+    return list(enumerate(streams))
+
+
 async def stream_to_omezarr(
     zenapi_config: str | Path,
     experiment_name: str,
@@ -1215,8 +1250,11 @@ async def _stream_to_omezarr_with_config_connected(
     # monitor_all_experiments here so the stream is ready before the
     # experiment_id exists.
     source_channels = [ecfg.channel_index] if ecfg.channel_index is not None else list(range(max(1, num_c)))
-    async_iterable = _merge_channel_streams(
-        [
+    streams: list[tuple[int, AsyncIterable[Any]]]
+    if ecfg.start_from_script:
+        streams = await _open_ready_channel_streams(channel, metadata, source_channels, inactivity_timeout, resources)
+    else:
+        streams = [
             (
                 output_channel,
                 streaming_service.monitor_all_experiments(
@@ -1228,7 +1266,7 @@ async def _stream_to_omezarr_with_config_connected(
             )
             for output_channel, source_channel in enumerate(source_channels)
         ]
-    )
+    async_iterable = _merge_channel_streams(streams)
     logger.info(
         "Pixel streams opened for "
         + (

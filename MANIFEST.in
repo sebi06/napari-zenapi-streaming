@@ -1,5 +1,6 @@
 include LICENSE
 include README.md
+exclude src/napari_zen_streaming/.env
 
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
