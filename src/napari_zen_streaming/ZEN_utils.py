@@ -64,9 +64,7 @@ def extract_metadata(response: Any) -> ImageMetadata:
     return metadata
 
 
-def extract_image_data(
-    response: Any, dtype: np.dtype, shape: tuple[int, int]
-) -> np.ndarray:
+def extract_image_data(response: Any, dtype: np.dtype, shape: tuple[int, int]) -> np.ndarray:
     """
     Extract raw image data from ZEN API response.
 
@@ -92,9 +90,7 @@ def extract_image_data(
     return image.reshape(shape)
 
 
-def normalize_for_display(
-    image: np.ndarray, target_dtype: DTypeLike = np.uint8
-) -> np.ndarray:
+def normalize_for_display(image: np.ndarray, target_dtype: DTypeLike = np.uint8) -> np.ndarray:
     """
     Normalize image to target dtype range for display.
 
@@ -130,17 +126,13 @@ def normalize_for_display(
         logger.debug("Constant image detected (min == max), returning zeros")
         return np.zeros_like(image, dtype=target_dtype)
 
-    normalized = (image.astype(np.float64) - float(img_min)) / (
-        float(img_max) - float(img_min)
-    )
+    normalized = (image.astype(np.float64) - float(img_min)) / (float(img_max) - float(img_min))
     if np.issubdtype(target_dtype, np.integer):
         normalized *= np.iinfo(target_dtype).max
     return normalized.astype(target_dtype)
 
 
-def process_frame(
-    response: Any, pixel_dtype: np.dtype, display_dtype: np.dtype
-) -> tuple[np.ndarray, ImageMetadata]:
+def process_frame(response: Any, pixel_dtype: np.dtype, display_dtype: np.dtype) -> tuple[np.ndarray, ImageMetadata]:
     """
     Complete frame processing pipeline.
 
