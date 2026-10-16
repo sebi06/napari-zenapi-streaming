@@ -2,21 +2,22 @@
 
 ## Project Overview
 
-**napari-zenapi-streaming** is a napari plugin and standalone CLI tool that streams live microscopy image data from ZEISS ZEN Blue software via the ZEN API (gRPC). It supports two operating modes selectable from the plugin UI:
+**napari-zenapi-streaming** is a napari plugin and standalone CLI tool that streams live microscopy image data from ZEISS ZEN Blue software via the ZEN API (gRPC). It supports three workflows selectable from the plugin UI:
 
 | Mode | Description |
 | --- | --- |
-| **Display only** | Streams frames into napari for real-time visualization via an async pipeline with sparse storage and post-acquisition restructure. |
+| **Display: watch ZEN experiment** | Passively displays an acquisition started in ZEN. |
+| **Display: start selected experiment** | Starts the selected setup and displays its experiment ID. |
 | **OME-ZARR only** | Writes frames directly to OME-ZARR on-the-fly. Bypasses the pipeline and calls the same standalone function as the CLI (`stream_to_omezarr_with_config`). |
 
 A standalone CLI (`ZEN_stream2omezarr.py`) is also available to stream directly to OME-ZARR without napari.
 
 **Key Features:**
 - Real-time streaming of microscopy images during acquisition
-- Two UI modes: Display only (napari viewer) and OME-ZARR only (direct file write)
+- Three UI workflows: passive Display, selected-experiment Display, and OME-ZARR
 - Two acquisition modes: Napari-initiated or ZEN-initiated experiments
 - Sparse array storage for efficient memory usage during streaming (Display mode)
-- Automatic restructuring from 7D streaming layer to 6D multi-channel layers (Display mode)
+- Latest-frame preview or optional 7D history, then 5D STZYX scene mosaics per channel
 - On-the-fly OME-ZARR writing with dedicated gRPC channel (OME-ZARR mode)
 - Read-only T/C/Z and Z-spacing controls populated from the selected experiment XML
 - Async/await architecture using qasync event loop
@@ -60,7 +61,7 @@ A standalone CLI (`ZEN_stream2omezarr.py`) is also available to stream directly 
    - Read-only dimension controls (T, C, Z, Z-spacing) with auto-recalculating total frames
    - Read-only labels for tiles, scenes
    - Output directory, compression, HCS, and pyramid controls; no experiment INI picker
-   - Manages 7D→6D layer restructuring after acquisition (Display mode)
+   - Merges streamed tiles into per-channel STZYX scene mosaics (Display mode)
    - In OME-ZARR only mode: bypasses pipeline, calls `stream_to_omezarr_with_config` directly
 
 6. **ZEN_utils.py** - Data processing utilities
@@ -82,6 +83,9 @@ A standalone CLI (`ZEN_stream2omezarr.py`) is also available to stream directly 
    - `stream_to_omezarr_with_config()`: Config mode — writes on-the-fly with bounded out-of-order buffering. **Used by both CLI and plugin.**
    - Creates its own dedicated gRPC channel (no contention with plugin)
    - Tight `while True:` read loop with frame-count break + inactivity timeout
+    - Filters experiment IDs before decoding; manually armed runs pin to the first ID
+    - Incomplete configured output raises `IncompleteAcquisitionError`, preserves
+       the partial store and completion report, and must not be auto-opened
 
 9. **misc.py** - ZEN API initialization utilities
    - Loads config.ini and establishes gRPC channel to ZEN Blue
@@ -173,7 +177,7 @@ def calculate_area(radius: float) -> float:
 ### Memory Management
 - Use **sparse array storage** during streaming (dict with tuple keys)
 - Convert to dense arrays only when necessary
-- Clear old layers before starting new experiments
+- Clear only plugin-owned layers before starting new experiments
 - Use `del` and gc for large array cleanup
 
 ### Logging
@@ -181,7 +185,7 @@ def calculate_area(radius: float) -> float:
 - Use the shared standard-library logging setup in `_logging.py`.
 - Log levels: DEBUG for verbose, INFO for milestones, ERROR for failures
 - Format: `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`
-- Log files stored in: `logging/zen_streaming.log`
+- Log files use the user state directory or `ZEN_LOG_DIR`, never package files
 - Include context in log messages (experiment name, frame indices, etc.)
 
 ## Key Design Patterns
@@ -193,15 +197,13 @@ frame_data: dict[tuple[int, ...], np.ndarray] = {}
 # Key: (s_idx, t_idx, m_idx, z_idx, c_idx), Value: 2D array (Y, X)
 ```
 
-### 2. Two Operating Modes
+### 2. Display and OME-ZARR Paths
 
 **Display only** (uses pipeline):
-- **Phase 1 (Streaming):** Single 7D layer with shape (N, 1, 1, 1, 1, Y, X)
-  - Updates in real-time as frames arrive
-  - STMZCYX axis labels
-- **Phase 2 (Complete):** Split into multiple 6D channel layers
+- **Phase 1 (Streaming):** Latest 2D frame by default, optional 7D full history
+- **Phase 2 (Complete):** Merge M tiles into one 5D layer per channel
   - One layer per channel
-  - Shape: (S, T, M, Z, Y, X)
+   - Shape: (S, T, Z, Y, X)
   - Named: "Channel_0", "Channel_1", etc.
 
 **OME-ZARR only** (bypasses pipeline):
@@ -238,8 +240,9 @@ distributes frames between active consumers.
 
 ### 4. Configuration Precedence
 ```
-Standalone app: CLI args > environment / .env > defaults
-Napari widget: package-local .env (loaded with override=True) > environment > defaults
+Plugin and standalone: CLI args (where supported) > process environment > dotenv > defaults
+Dotenv location: ZEN_ENV_FILE > user config directory > editable-checkout fallback
+Gateway INI: ZEN_CONFIG_FILE > user config directory > working directory > checkout fallback
 Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensions
 ```
 
@@ -263,8 +266,8 @@ Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensio
 
 ### ZEN API
 - **zen_api** - ZEISS ZEN API client (gRPC stubs)
-   - The Conda environment manifest installs the `zen_api-2026.05.1` wheel
-  - Always use raw.githubusercontent.com URLs, not github.com/blob
+   - Install an authorized compatible wheel separately; no public URL is assumed
+   - Local validation uses zen-api 2026.11.1; CI requires `ZEN_API_WHEEL_URL`
 
 ### Development
 - **pytest** - Testing
@@ -282,7 +285,7 @@ Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensio
 
 ### Adding a New Layer Type
 1. Update `StreamingViewer._create_layer_slot()` and/or `StreamingViewer.perform_restructure()`
-2. Handle new dimensions in sparse storage keys and `_build_channel_6d_array()`
+2. Handle new dimensions in sparse storage keys and scene-mosaic assembly
 3. Update metadata extraction in `ZEN_utils.process_frame()`
 4. Test with an appropriate ZEN experiment
 
@@ -445,7 +448,7 @@ conda activate zenapi-napari
 # Install package in development mode
 pip install -e .
 
-# The Conda environment above already includes the ZEN API wheel.
+# Install the authorized ZEN API wheel in the same environment separately.
 ```
 
 ### Running

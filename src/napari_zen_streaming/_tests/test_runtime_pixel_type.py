@@ -8,6 +8,33 @@ from napari_zen_streaming.ZEN_stream2omezarr import (
     _decode_grayscale_frame,
     _runtime_grayscale_dtype,
 )
+from napari_zen_streaming.ZEN_utils import normalize_for_display
+
+
+@pytest.mark.parametrize(
+    "target",
+    [np.uint8, np.dtype("uint8"), np.uint16, np.dtype("uint16"), np.float32],
+)
+@pytest.mark.parametrize("shape", [(0, 2), (2, 2)])
+@pytest.mark.parametrize("constant", [False, True])
+def test_normalize_display_preserves_requested_dtype(
+    target, shape, constant
+) -> None:
+    """Dtype objects and scalar classes share normalization and edge cases."""
+    image = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape)
+    if constant:
+        image.fill(5)
+
+    result = normalize_for_display(image, target)
+
+    assert result.dtype == np.dtype(target)
+    assert result.shape == image.shape
+    if image.size:
+        assert result.min() == 0
+        maximum = (
+            np.iinfo(target).max if np.issubdtype(target, np.integer) else 1
+        )
+        assert result.max() == (0 if constant else maximum)
 
 
 @pytest.mark.parametrize(

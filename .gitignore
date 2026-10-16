@@ -1,5 +1,9 @@
 config.ini
-src/napari_zen_streaming/napari_zen_streaming.egg-info/
+*.egg-info/
+build/
+dist/
+.coverage*
+coverage.xml
 public/
 archive/
 *.log
@@ -7,5 +11,4 @@ archive/
 .pytest_cache/
 /.github/instructions/
 /snipptes
-/src/napari_zenapi_streaming.egg-info
 /snippets

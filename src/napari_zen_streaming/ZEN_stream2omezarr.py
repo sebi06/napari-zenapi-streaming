@@ -42,6 +42,7 @@ import argparse
 import asyncio
 import contextlib
 import itertools
+import json
 import logging
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable
@@ -49,13 +50,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import dotenv
 import numpy as np
-from grpclib.const import Cardinality
-from grpclib.exceptions import ProtocolError, StreamTerminatedError
 
 # ome-writers
 import zarr
+from grpclib.const import Cardinality
+from grpclib.exceptions import ProtocolError, StreamTerminatedError
 
 # napari.utils.progress subclasses tqdm: shows in the napari activity dock
 # when a viewer is open; falls back to a tqdm terminal bar in CLI mode.
@@ -86,6 +86,7 @@ from napari_zen_streaming._scene_geometry import (
     calculate_scene_geometry,
 )
 from napari_zen_streaming.misc import initialize_zenapi
+from napari_zen_streaming.ZEN_config import load_runtime_settings
 from napari_zen_streaming.ZEN_omezarr import (
     ExperimentConfig,
     load_experiment_acquisition,
@@ -107,6 +108,19 @@ _GRAYSCALE_PIXEL_DTYPES: dict[PixelType, np.dtype] = {
 
 # Inactivity timeout (seconds) for pixel-stream completion.
 _STATUS_POLL_TIMEOUT: float = 30.0
+
+
+class IncompleteAcquisitionError(RuntimeError):
+    """An acquisition ended with missing frames but its partial output remains."""
+
+    def __init__(self, zarr_path: Path, received: int, expected: int) -> None:
+        self.zarr_path = zarr_path
+        self.received_frames = received
+        self.expected_frames = expected
+        super().__init__(
+            f"Incomplete acquisition: received {received}/{expected} frames. "
+            f"Partial output: {zarr_path}. See acquisition_status.json."
+        )
 
 
 def _runtime_grayscale_dtype(
@@ -703,7 +717,10 @@ async def _merge_channel_streams(
     """Merge explicit channel subscriptions into one asynchronous stream."""
     iterators = [(output_channel, stream.__aiter__()) for output_channel, stream in streams]
     tasks = {
-        asyncio.create_task(stream_iter.__anext__()): (output_channel, stream_iter)
+        asyncio.create_task(stream_iter.__anext__()): (
+            output_channel,
+            stream_iter,
+        )
         for output_channel, stream_iter in iterators
     }
     try:
@@ -736,10 +753,8 @@ async def _close_async_iterator(iterator: AsyncIterator[Any]) -> None:
 
 async def _cancel_channel_stream(stream: Any) -> None:
     """Reset a persistent monitor before grpclib waits for server trailers."""
-    try:
+    with contextlib.suppress(ProtocolError, StreamTerminatedError):
         await stream.cancel()
-    except (ProtocolError, StreamTerminatedError):
-        pass
 
 
 async def _open_channel_streams(
@@ -932,7 +947,7 @@ async def _stream_to_omezarr_connected(
     while True:
         try:
             response = await asyncio.wait_for(async_iter.__anext__(), timeout=inactivity_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.info(f"No frames for {inactivity_timeout:.0f}s" " - assuming experiment finished.")
             break
         except StopAsyncIteration:
@@ -985,7 +1000,10 @@ async def _stream_to_omezarr_connected(
             full_size.width,
             full_size.height,
         )
-        if frame_height is not None and frame.shape != (frame_height, frame_width):
+        if frame_height is not None and frame.shape != (
+            frame_height,
+            frame_width,
+        ):
             raise ValueError(
                 "Streamed frame shape changed during acquisition: " f"{(frame_height, frame_width)} to {frame.shape}."
             )
@@ -1155,7 +1173,13 @@ async def _stream_to_omezarr_connected(
     logger.info(f"Writing {frame_count} frames to OME-ZARR ...")
 
     with create_stream(settings) as stream:
-        coords = itertools.product(range(num_t), range(num_s), range(num_m), range(num_c), range(num_z))
+        coords = itertools.product(
+            range(num_t),
+            range(num_s),
+            range(num_m),
+            range(num_c),
+            range(num_z),
+        )
         for t_idx, s_idx, m_idx, c_idx, z_idx in napari_progress(coords, total=total_expected, desc="Writing frames"):
             key = (t_idx, s_idx, m_idx, c_idx, z_idx)
             if key in coord_to_idx:
@@ -1195,13 +1219,17 @@ async def stream_to_omezarr_with_config(
         progress_callback: Optional callable ``(current, total) -> None``
             for progress reporting.  Sentinel values for ``current``:
             ``-1`` = writing started (total is now known);
-            ``-2`` = acquisition complete.
+            ``-2`` = acquisition complete; ``-3`` = incomplete or failed.
             When *None* a tqdm bar is displayed in the terminal instead.
         on_experiment_started: Optional callback receiving the experiment ID
             when an acquisition is started via ZEN API.
 
     Returns:
         Path to the created OME-ZARR directory.
+
+    Raises:
+        IncompleteAcquisitionError: Expected frames are missing. Finalized
+            partial output and its acquisition status report are retained.
     """
     channel, metadata = initialize_zenapi(ecfg.zenapi_config)
     try:
@@ -1277,15 +1305,15 @@ async def _stream_to_omezarr_with_config_connected(
         ]
     async_iterable = _merge_channel_streams(streams)
     logger.info(
-        "Pixel streams opened for "
-        + (
+        "Pixel streams opened for %s",
+        (
             f"selected channel {ecfg.channel_index}."
             if ecfg.channel_index is not None
             else f"all {len(source_channels)} channels."
-        )
+        ),
     )
 
-    # ----- now optionally start the experiment -----
+    target_experiment_id: str | None = None
     if ecfg.start_from_script:
         logger.info(f"Starting experiment '{ecfg.experiment_name}' via ZEN-API ...")
         exp_id, czi_path = await start_experiment(
@@ -1294,6 +1322,7 @@ async def _stream_to_omezarr_with_config_connected(
             overwrite=ecfg.overwrite_czi,
             zenapi_config=ecfg.zenapi_config,
         )
+        target_experiment_id = exp_id
         logger.info(f"Experiment ID: {exp_id}")
         logger.info(f"CZI file will be saved to: {czi_path}")
         if on_experiment_started is not None:
@@ -1357,6 +1386,7 @@ async def _stream_to_omezarr_with_config_connected(
     # Qt signal.  In CLI mode (no callback) use a tqdm terminal bar instead.
     _tqdm_bar: Any = None  # only used in CLI mode
     progress_closed = False
+    acquisition_complete = False
 
     def _progress_init(total: int) -> None:
         """Open the progress bar once the total frame count is known."""
@@ -1377,13 +1407,13 @@ async def _stream_to_omezarr_with_config_connected(
             _tqdm_bar.update(1)
 
     def _progress_close() -> None:
-        """Close the bar when the acquisition is complete."""
+        """Close progress without treating failure as successful completion."""
         nonlocal progress_closed
         if progress_closed:
             return
         progress_closed = True
         if progress_callback is not None:
-            progress_callback(-2, 0)
+            progress_callback(-2 if acquisition_complete else -3, 0)
         elif _tqdm_bar is not None:
             _tqdm_bar.close()
 
@@ -1459,7 +1489,10 @@ async def _stream_to_omezarr_with_config_connected(
             f"output_frames={output_settings.num_frames} "
             f"input_frames={len(coord_to_linear)}"
         )
-        return zarr_resources.enter_context(create_stream(output_settings)), output_settings
+        return (
+            zarr_resources.enter_context(create_stream(output_settings)),
+            output_settings,
+        )
 
     # We iterate the gRPC stream manually (via __aiter__ + __anext__)
     # instead of `async for` so we can wrap each step in wait_for() to
@@ -1474,13 +1507,22 @@ async def _stream_to_omezarr_with_config_connected(
     while True:
         try:
             stream_c, response = await asyncio.wait_for(async_iter.__anext__(), timeout=inactivity_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.info(f"No frames for {inactivity_timeout:.0f}s - assuming experiment finished.")
             break
         except StopAsyncIteration:
             break
 
         fd = response.frame_data
+        frame_experiment_id = fd.experiment_id
+        if not frame_experiment_id:
+            raise ValueError("Streamed frame has no experiment ID")
+        if target_experiment_id is None:
+            target_experiment_id = frame_experiment_id
+            logger.info("Pixel stream pinned to experiment %s", target_experiment_id)
+        if frame_experiment_id != target_experiment_id:
+            logger.debug("Ignoring frame from experiment %s", frame_experiment_id)
+            continue
         fp = fd.frame_position
 
         # 5-D acquisition coordinate of this frame.
@@ -1567,6 +1609,7 @@ async def _stream_to_omezarr_with_config_connected(
                 logger.warning(
                     "Could not query live dimensions; using config values: %s",
                     exc,
+                    exc_info=True,
                 )
 
             if ecfg.channel_index is not None:
@@ -1812,9 +1855,22 @@ async def _stream_to_omezarr_with_config_connected(
                 keep_source_tiles=ecfg.keep_source_tiles,
             )
 
+    missing_coordinates = [coordinate for coordinate, index in coord_to_linear.items() if index not in received_indices]
+    acquisition_complete = not missing_coordinates
+    status = {
+        "complete": acquisition_complete,
+        "experiment_id": target_experiment_id,
+        "expected_frames": len(coord_to_linear),
+        "received_frames": frame_count,
+        "coordinate_axes": ["t", "s", "m", "c", "z"],
+        "missing_coordinates": missing_coordinates,
+    }
+    (zarr_path / "acquisition_status.json").write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
     _progress_close()
-    logger.info(f"OME-ZARR written successfully: {zarr_path}")
-    logger.info(f"Frames received: {frame_count} / {total_expected} expected")
+    if not acquisition_complete:
+        raise IncompleteAcquisitionError(zarr_path, frame_count, len(coord_to_linear))
+    logger.info("OME-ZARR written successfully: %s", zarr_path)
+    logger.info("Frames received: %s / %s expected", frame_count, total_expected)
     return zarr_path
 
 
@@ -1916,7 +1972,7 @@ def parse_args() -> argparse.Namespace:
         "--inactivity-timeout",
         type=float,
         default=_STATUS_POLL_TIMEOUT,
-        help="Seconds without a frame before acquisition is considered complete.",
+        help="Seconds without a frame before streaming stops; missing expected frames fail configured acquisitions.",
     )
     parser.add_argument(
         "--viewer",
@@ -1955,7 +2011,7 @@ async def _run_configured_experiment(ecfg: ExperimentConfig, inactivity_timeout:
 
 def main() -> None:
     """Entry point: parse arguments, run the appropriate streaming mode, and open the viewer."""
-    dotenv.load_dotenv(Path(__file__).parent / ".env")
+    load_runtime_settings()
     configure_logging()
     args = parse_args()
 

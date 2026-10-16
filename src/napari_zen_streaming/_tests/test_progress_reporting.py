@@ -81,6 +81,7 @@ def test_standalone_writer_removes_stale_streaming_progress(
     viewer._progress_phase = "idle"
     viewer._standalone_zarr_active = True
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 2)
+    viewer._mode_index = 2
     viewer.start_button = SimpleNamespace(isEnabled=lambda: True)
 
     viewer._update_progress_slot(0, 64)
@@ -128,6 +129,7 @@ def test_targeted_display_keeps_only_one_streaming_bar(monkeypatch) -> None:
     orphan.set_description("Streaming frames")
     viewer = object.__new__(StreamingViewer)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer._mode_index = 1
     viewer.is_streaming = True
     viewer._napari_progress = None
     viewer._napari_progress_bars = set()

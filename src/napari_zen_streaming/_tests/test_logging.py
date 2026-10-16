@@ -42,7 +42,9 @@ def test_configure_logging_is_idempotent_and_writes_file(
         handler.flush()
 
     managed_handlers = [
-        handler for handler in logger.handlers if getattr(handler, "_napari_zen_streaming_handler", False)
+        handler
+        for handler in logger.handlers
+        if getattr(handler, "_napari_zen_streaming_handler", False)
     ]
     assert len(managed_handlers) == 2
     terminal_output = capsys.readouterr().out

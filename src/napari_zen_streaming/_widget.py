@@ -4,18 +4,17 @@ Napari plugin widget for ZEN API streaming.
 
 import asyncio
 import logging
-from pathlib import Path
 
-import dotenv
 from napari.qt.threading import thread_worker
 from qtpy.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from napari_zen_streaming._logging import configure_logging
+from napari_zen_streaming.ZEN_config import load_runtime_settings
 
 logger = logging.getLogger(__name__)
 
 
-def create_zen_widget():
+def create_zen_widget() -> QWidget:
     """
     Factory function called by napari to create the widget.
 
@@ -23,11 +22,6 @@ def create_zen_widget():
     application in the background. The actual experiment selector UI is created
     by the StreamingViewer and added as a separate dock widget.
     """
-    # Load package settings before logging so ZEN_LOG_DIR takes effect.
-    env_file = Path(__file__).parent / ".env"
-    dotenv.load_dotenv(env_file, override=True)
-    configure_logging()
-
     # Create simple status widget
     widget = QWidget()
     layout = QVBoxLayout()
@@ -36,36 +30,40 @@ def create_zen_widget():
     layout.addWidget(status_label)
     widget.setLayout(layout)
 
-    # Immediately start initialization in background
+    from napari_zen_streaming.main import ZENApplication
+    from napari_zen_streaming.ZEN_config import ZENConfig
+
+    try:
+        load_runtime_settings()
+        configure_logging()
+        app = ZENApplication(ZENConfig.from_env())
+    except (FileNotFoundError, ValueError) as exc:
+        logger.exception("Invalid ZEN streaming configuration")
+        status_label.setText(str(exc))
+        return widget
+
     @thread_worker
     def init_zen():
-        """Initialize ZEN and run everything in worker thread."""
-        from napari_zen_streaming.main import ZENApplication
-        from napari_zen_streaming.ZEN_config import ZENConfig
-
+        """Open the connection on the event loop that will receive frames."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        app.worker_loop = loop
         try:
-            # Create config
-            config = ZENConfig.from_env()
-
-            # Create application
-            app = ZENApplication(config)
-
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            app.worker_loop = loop
-
-            # Initialize connection and get experiments
             logger.debug("Initializing ZEN connection...")
             experiments = loop.run_until_complete(app.setup_connection())
 
-            logger.debug(f"Successfully retrieved {len(experiments)} experiments")
+            logger.debug(
+                f"Successfully retrieved {len(experiments)} experiments"
+            )
 
             # Return to main thread to setup viewer
             return app, experiments, loop
 
         except Exception as e:
             logger.error(f"Initialization failed: {e}", exc_info=True)
+            if app.connection is not None:
+                app.connection.close()
+            loop.close()
             return None, None, None
 
     worker = init_zen()
@@ -74,7 +72,7 @@ def create_zen_widget():
     def on_init_complete(result):
         app, experiments, loop = result
 
-        if app and experiments and loop:
+        if app is not None and experiments is not None and loop is not None:
             logger.debug("Setting up viewer in main thread...")
             app.setup_viewer(experiments)
 
@@ -84,10 +82,14 @@ def create_zen_widget():
             viewer = current_viewer()
             if viewer:
                 # Find and remove this dock widget
-                for key, dock_widget in list(viewer.window.dock_widgets.items()):
+                for key, dock_widget in list(
+                    viewer.window.dock_widgets.items()
+                ):
                     try:
-                        # Try different ways to access the widget
-                        if hasattr(dock_widget, "widget") or dock_widget == widget or "ZEN API Streaming" in str(key):
+                        if dock_widget is widget or (
+                            hasattr(dock_widget, "widget")
+                            and dock_widget.widget() is widget
+                        ):
                             viewer.window.remove_dock_widget(dock_widget)
                             break
                     except (AttributeError, KeyError, RuntimeError) as e:
@@ -105,6 +107,8 @@ def create_zen_widget():
                     logger.debug("Pipeline completed")
                 except Exception as e:
                     logger.error(f"Pipeline error: {e}", exc_info=True)
+                finally:
+                    loop.close()
 
             pipeline_worker = run_pipeline()
             pipeline_worker.start()

@@ -7,30 +7,17 @@ import asyncio
 import logging
 import os
 import sys
-from pathlib import Path
 
-import dotenv
 import napari
 import qasync
 from napari.qt.threading import thread_worker
 from qtpy import QtWidgets
 
 from napari_zen_streaming._logging import configure_logging
-
-# Add parent directory to path for direct script execution
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent))
-
-try:
-    from .ZEN_config import ZENConfig
-    from .ZEN_init import ExperimentContext, ZENConnection
-    from .ZEN_pipeline import StreamingPipeline
-    from .ZEN_ui import StreamingViewer
-except ImportError:
-    from ZEN_config import ZENConfig
-    from ZEN_init import ExperimentContext, ZENConnection
-    from ZEN_pipeline import StreamingPipeline
-    from ZEN_ui import StreamingViewer
+from napari_zen_streaming.ZEN_config import ZENConfig, load_runtime_settings
+from napari_zen_streaming.ZEN_init import ExperimentContext, ZENConnection
+from napari_zen_streaming.ZEN_pipeline import StreamingPipeline
+from napari_zen_streaming.ZEN_ui import StreamingViewer
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +33,18 @@ class ZENApplication:
         self.worker_loop = None
 
         # Initialize Qt and asyncio loop
-        self.qt_app = napari.qt.get_qapp() if self.embedded else QtWidgets.QApplication(sys.argv)
+        self.qt_app = (
+            napari.qt.get_qapp()
+            if self.embedded
+            else QtWidgets.QApplication(sys.argv)
+        )
         try:
             existing = asyncio.get_running_loop()
-            self.loop = existing if isinstance(existing, qasync.QEventLoop) else qasync.QEventLoop(self.qt_app)
+            self.loop = (
+                existing
+                if isinstance(existing, qasync.QEventLoop)
+                else qasync.QEventLoop(self.qt_app)
+            )
             asyncio.set_event_loop(self.loop)
         except RuntimeError:
             self.loop = qasync.QEventLoop(self.qt_app)
@@ -102,29 +97,6 @@ class ZENApplication:
             # initial selection can load its dimensions immediately.
             self.viewer.populate_experiments(experiments)
 
-    def run_coro_in_worker(self, coro):
-        """Run coroutine in worker thread loop."""
-        if self.worker_loop and not self.worker_loop.is_closed():
-            return asyncio.run_coroutine_threadsafe(coro, self.worker_loop)
-        elif self.embedded:
-            return asyncio.create_task(coro)
-        else:
-            raise RuntimeError("Worker event loop not available")
-
-    def start_pipeline_worker(self):
-        """Run pipeline in background thread with its own event loop."""
-
-        @thread_worker
-        def run_pipeline():
-            asyncio.set_event_loop(self.worker_loop)
-            try:
-                self.worker_loop.run_until_complete(self.run())
-            except Exception as e:
-                logger.error(f"Pipeline error: {e}", exc_info=True)
-
-        worker = run_pipeline()
-        worker.start()
-
     async def setup(self) -> None:
         experiments = await self.setup_connection()
         self.setup_viewer(experiments)
@@ -136,7 +108,9 @@ class ZENApplication:
             async with self.pipeline:
                 while True:
                     try:
-                        if not self.viewer.viewer.window._qt_window.isVisible():
+                        if (
+                            not self.viewer.viewer.window._qt_window.isVisible()
+                        ):
                             break
                     except RuntimeError:
                         # Qt window deleted — napari is closing.
@@ -149,7 +123,7 @@ class ZENApplication:
 
     async def cleanup(self) -> None:
         logger.debug("Cleaning up application")
-        if self.viewer:
+        if self.viewer and not self.embedded:
             try:
                 self.viewer.close()
             except RuntimeError:
@@ -171,7 +145,9 @@ class ZENApplication:
 
                 try:
                     # Setup connection
-                    experiments = loop.run_until_complete(self.setup_connection())
+                    experiments = loop.run_until_complete(
+                        self.setup_connection()
+                    )
 
                     # Return experiments to main thread
                     return experiments
@@ -189,7 +165,9 @@ class ZENApplication:
                     # Start pipeline in the worker loop
                     if self.worker_loop and not self.worker_loop.is_closed():
                         # Schedule pipeline start
-                        asyncio.run_coroutine_threadsafe(self.run(), self.worker_loop)
+                        asyncio.run_coroutine_threadsafe(
+                            self.run(), self.worker_loop
+                        )
 
                         # Keep worker loop running in background
                         @thread_worker
@@ -215,10 +193,12 @@ class ZENApplication:
 
 
 def main():
-    dotenv.load_dotenv()
+    load_runtime_settings()
 
     configure_logging()
-    parser = argparse.ArgumentParser(description="ZEN API Streaming Application")
+    parser = argparse.ArgumentParser(
+        description="ZEN API Streaming Application"
+    )
     parser.add_argument("--ui-start", choices=["true", "false"])
     parser.add_argument("--exp-name")
     parser.add_argument("--config-file")
@@ -241,7 +221,9 @@ def main():
         config = ZENConfig.from_env()
         logger.debug("=" * 60)
         logger.debug("Starting ZEN API Streaming Application")
-        logger.debug(f"Mode: {'Napari UI' if config.exp_started_by_ui else 'ZEN Monitor'}")
+        logger.debug(
+            f"Mode: {'Napari UI' if config.exp_started_by_ui else 'ZEN Monitor'}"
+        )
         logger.debug(f"Experiment: {config.exp_name}")
         logger.debug("=" * 60)
 

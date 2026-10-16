@@ -69,8 +69,12 @@ def calculate_scene_geometry(
         raise ValueError("Tile pixel scales must be positive")
 
     for tile in tiles[1:]:
-        if not math.isclose(tile.scale_y, scale_y) or not math.isclose(tile.scale_x, scale_x):
-            raise ValueError("All tiles in a scene must use the same pixel scale")
+        if not math.isclose(tile.scale_y, scale_y) or not math.isclose(
+            tile.scale_x, scale_x
+        ):
+            raise ValueError(
+                "All tiles in a scene must use the same pixel scale"
+            )
 
     tile_origins = [
         (
@@ -144,12 +148,27 @@ def assemble_channel_scene_mosaics(
     unique_z = sorted({z_index for _, _, _, z_index, _ in channel_frames})
     scene_geometries: dict[int, SceneGeometry] = {}
     for scene_index in unique_s:
-        tile_indices = sorted({tile_index for scene, _, tile_index, _, _ in channel_frames if scene == scene_index})
-        missing = [tile_index for tile_index in tile_indices if (scene_index, tile_index) not in tile_geometries]
+        tile_indices = sorted(
+            {
+                tile_index
+                for scene, _, tile_index, _, _ in channel_frames
+                if scene == scene_index
+            }
+        )
+        missing = [
+            tile_index
+            for tile_index in tile_indices
+            if (scene_index, tile_index) not in tile_geometries
+        ]
         if missing:
-            raise ValueError(f"Missing geometry for scene {scene_index} tiles {missing}")
+            raise ValueError(
+                f"Missing geometry for scene {scene_index} tiles {missing}"
+            )
         scene_geometries[scene_index] = calculate_scene_geometry(
-            [tile_geometries[(scene_index, tile_index)] for tile_index in tile_indices]
+            [
+                tile_geometries[(scene_index, tile_index)]
+                for tile_index in tile_indices
+            ]
         )
 
     first_image = channel_frames[0][4]

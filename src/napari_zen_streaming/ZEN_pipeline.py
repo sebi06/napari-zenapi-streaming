@@ -51,7 +51,11 @@ class StreamingPipeline:
     """
 
     def __init__(
-        self, connection: ZENConnection, experiment: ExperimentContext, viewer: StreamingViewer, config: ZENConfig
+        self,
+        connection: ZENConnection,
+        experiment: ExperimentContext,
+        viewer: StreamingViewer,
+        config: ZENConfig,
     ):
         """
         Initialize streaming pipeline.
@@ -65,7 +69,9 @@ class StreamingPipeline:
         self.connection = connection
         self.experiment = experiment
         self.viewer = viewer
-        self.viewer.connection = self.connection  # Give viewer access to connection
+        self.viewer.connection = (
+            self.connection
+        )  # Give viewer access to connection
         self.config = config
 
         # ========== Pipeline Control ==========
@@ -195,7 +201,9 @@ class StreamingPipeline:
                 logger.debug("Monitoring all experiments (ZEN-started mode)")
             else:
                 logger.debug(
-                    f"Monitoring all experiments for " f"{self.experiment.experiment_id} " f"(Napari-started mode)"
+                    f"Monitoring all experiments for "
+                    f"{self.experiment.experiment_id} "
+                    f"(Napari-started mode)"
                 )
 
             # Use the viewer's effective channel index (overridable
@@ -210,7 +218,11 @@ class StreamingPipeline:
                 channel_index=effective_ch,
                 enable_raw_data=self.config.enable_raw_data,
             )
-            self._reader_iter = self.connection.streaming_service.monitor_all_experiments(request).__aiter__()
+            self._reader_iter = (
+                self.connection.streaming_service.monitor_all_experiments(
+                    request
+                ).__aiter__()
+            )
             self._reader_ready.set()
 
             # Read frames from ZEN API stream
@@ -230,13 +242,19 @@ class StreamingPipeline:
 
                 # Queue frame for processing
                 if self.queue.full():
-                    logger.warning(f"Queue full (maxsize={self.queue.maxsize})." " Dropping or delaying item.")
+                    logger.warning(
+                        f"Queue full (maxsize={self.queue.maxsize})."
+                        " Dropping or delaying item."
+                    )
 
                 await self.queue.put(response)
                 self.frames_received += 1
 
             # Iterator completed naturally - experiment finished
-            logger.debug(f"Frame iterator completed after " f"{self.frames_received} frames (experiment finished)")
+            logger.debug(
+                f"Frame iterator completed after "
+                f"{self.frames_received} frames (experiment finished)"
+            )
 
             # Notify viewer that experiment has finished
             # This triggers restructure for ZEN-started experiments
@@ -338,8 +356,10 @@ class StreamingPipeline:
             while not self.stop_event.is_set() or not self.queue.empty():
                 try:
                     # Wait for frame with timeout to periodically check stop event
-                    response = await asyncio.wait_for(self.queue.get(), timeout=0.1)
-                except asyncio.TimeoutError:
+                    response = await asyncio.wait_for(
+                        self.queue.get(), timeout=0.1
+                    )
+                except TimeoutError:
                     # No frame available, continue loop to check stop event
                     continue
 
@@ -369,7 +389,10 @@ class StreamingPipeline:
 
                 except Exception as e:
                     # Log error but continue processing other frames
-                    logger.error(f"Error processing frame {self.frames_processed + 1}: {e}", exc_info=True)
+                    logger.error(
+                        f"Error processing frame {self.frames_processed + 1}: {e}",
+                        exc_info=True,
+                    )
 
                 finally:
                     # Always mark task as done for queue bookkeeping
@@ -379,7 +402,9 @@ class StreamingPipeline:
             logger.debug("Frame processor task cancelled (pipeline stopped)")
             raise
         finally:
-            logger.debug(f"Frame processor task stopped (processed {self.frames_processed} total frames)")
+            logger.debug(
+                f"Frame processor task stopped (processed {self.frames_processed} total frames)"
+            )
 
     async def __aenter__(self):
         """
@@ -425,10 +450,8 @@ class StreamingPipeline:
         """
         if self.reader_task and not self.reader_task.done():
             self.reader_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self.reader_task
-            except asyncio.CancelledError:
-                pass
             self.reader_task = None
         # Belt-and-suspenders: aclose() is also called in _read_frames'
         # finally block, but if that await was itself interrupted we

@@ -27,6 +27,16 @@ class _RecordedSignal:
         self.calls.append(args)
 
 
+@pytest.mark.parametrize("mode", [0, 1, 2])
+def test_worker_mode_checks_do_not_read_qt_widgets(mode: int) -> None:
+    """Mode properties use cached state rather than a worker-side Qt call."""
+    viewer = StreamingViewer.__new__(StreamingViewer)
+    viewer._mode_index = mode
+    assert viewer.display_enabled == (mode != 2)
+    assert viewer.watch_enabled == (mode == 0)
+    assert viewer.omezarr_enabled == (mode == 2)
+
+
 def _metadata(frame_index: int) -> SimpleNamespace:
     """Create metadata with one unique Z index per synthetic frame."""
     return SimpleNamespace(
@@ -56,6 +66,7 @@ def _viewer_for_buffer_test(latest_only: bool) -> StreamingViewer:
     viewer.is_processing = True
     viewer._run_live_latest = latest_only
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 0)
+    viewer._mode_index = 0
     viewer.signals = SimpleNamespace(
         create_layer=_RecordedSignal(),
         update_layer=_RecordedSignal(),
@@ -104,11 +115,35 @@ def test_latest_preview_stores_all_frames_without_dense_history() -> None:
     np.testing.assert_array_equal(preview_image, np.full((2, 3), 2))
 
 
+def test_clear_layers_preserves_unrelated_user_data() -> None:
+    """Starting again removes plugin layers, not user images or annotations."""
+    viewer = object.__new__(StreamingViewer)
+    unrelated, streaming, previous_result = object(), object(), object()
+    viewer.viewer = SimpleNamespace(
+        layers=[unrelated, streaming, previous_result]
+    )
+    viewer.image_layer = streaming
+    viewer.image_layers = {}
+    viewer._owned_layers = [streaming, previous_result]
+    viewer._napari_progress = None
+
+    viewer._clear_layers()
+    viewer._clear_layers()
+
+    assert viewer.viewer.layers == [unrelated]
+    assert viewer.image_layer is None
+    assert not viewer.image_layers
+    assert not viewer._owned_layers
+
+
 def test_targeted_display_reports_received_frame_progress() -> None:
     """Selected experiments report unique received frames against XML dimensions."""
     viewer = _viewer_for_buffer_test(latest_only=True)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
-    viewer._selected_experiment_metadata = SimpleNamespace(time_points=1, channels=1, z_planes=3, tiles=1, scenes=1)
+    viewer._mode_index = 1
+    viewer._selected_experiment_metadata = SimpleNamespace(
+        time_points=1, channels=1, z_planes=3, tiles=1, scenes=1
+    )
     viewer._effective_channel_index = None
     viewer.signals.update_progress = _RecordedSignal()
 
@@ -174,6 +209,7 @@ def test_post_restructure_straggler_does_not_freeze_option() -> None:
     viewer.last_frame_time = 0.0
     viewer._standalone_zarr_active = False
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 0)
+    viewer._mode_index = 0
     viewer.is_streaming = False
     viewer._restructure_completed_at = time.time()
     viewer._live_latest_preference = True
@@ -213,10 +249,13 @@ def test_streamed_z_positions_override_stale_xml_spacing() -> None:
 
 
 @pytest.mark.parametrize("mode, expected_spacing", [(0, 1.0), (1, 7.0)])
-def test_display_z_fallback_uses_selected_xml_only_for_targeted_mode(mode: int, expected_spacing: float) -> None:
+def test_display_z_fallback_uses_selected_xml_only_for_targeted_mode(
+    mode: int, expected_spacing: float
+) -> None:
     """Passive ZEN watching must not borrow a selected setup's Z spacing."""
     viewer = object.__new__(StreamingViewer)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: mode)
+    viewer._mode_index = mode
     viewer.image_layers = {}
     viewer.image_layer = None
     viewer.unique_channels = {0, 1}
@@ -229,7 +268,9 @@ def test_display_z_fallback_uses_selected_xml_only_for_targeted_mode(mode: int, 
     viewer.viewer = SimpleNamespace(
         layers=[],
         add_image=lambda data, **kwargs: layer_options.append(kwargs),
-        dims=SimpleNamespace(axis_labels=(), ndim=5, set_current_step=lambda axis, step: None),
+        dims=SimpleNamespace(
+            axis_labels=(), ndim=5, set_current_step=lambda axis, step: None
+        ),
     )
     image = np.zeros((2, 3), dtype=np.uint8)
     viewer._restructure_complete_slot(
@@ -240,5 +281,7 @@ def test_display_z_fallback_uses_selected_xml_only_for_targeted_mode(mode: int, 
     )
 
     assert len(layer_options) == 2
-    assert all(options["scale"][2] == expected_spacing for options in layer_options)
+    assert all(
+        options["scale"][2] == expected_spacing for options in layer_options
+    )
     assert all(options["blending"] == "additive" for options in layer_options)

@@ -44,8 +44,8 @@ class ZENConnection:
     - Separates connection management from experiment lifecycle
 
     Thread Safety:
-    - gRPC channels are thread-safe
-    - Service stubs can be used from multiple async tasks
+    - The grpclib channel and its stubs belong to their creation event loop.
+    - Schedule API calls on that loop rather than calling across threads.
     """
 
     def __init__(self, config: ZENConfig):
@@ -63,18 +63,26 @@ class ZENConnection:
             FileNotFoundError: If config file doesn't exist
         """
         self.config = config
-        logger.debug(f"Initializing ZEN API connection from {config.config_file}")
+        logger.debug(
+            f"Initializing ZEN API connection from {config.config_file}"
+        )
 
         # Initialize gRPC channel and metadata from config file
         # This reads host, port, and authentication from config.ini
-        self.channel, self.metadata = initialize_zenapi(str(config.config_file))
+        self.channel, self.metadata = initialize_zenapi(
+            str(config.config_file)
+        )
 
         # Create service stubs for API communication
         # Streaming service: For receiving image data
-        self.streaming_service = ExperimentStreamingServiceStub(channel=self.channel, metadata=self.metadata)
+        self.streaming_service = ExperimentStreamingServiceStub(
+            channel=self.channel, metadata=self.metadata
+        )
 
         # Experiment service: For loading, starting, managing experiments
-        self.experiment_service = ExperimentServiceStub(channel=self.channel, metadata=self.metadata)
+        self.experiment_service = ExperimentServiceStub(
+            channel=self.channel, metadata=self.metadata
+        )
 
         logger.debug("ZEN API connection established successfully")
 
@@ -99,13 +107,19 @@ class ZENConnection:
         """
         logger.debug(f"Loading experiment: {experiment_name}")
 
-        response = await self.experiment_service.load(ExperimentServiceLoadRequest(experiment_name=experiment_name))
+        response = await self.experiment_service.load(
+            ExperimentServiceLoadRequest(experiment_name=experiment_name)
+        )
 
         exp_id = response.experiment_id
-        logger.debug(f"Loaded experiment '{experiment_name}' with ID: {exp_id}")
+        logger.debug(
+            f"Loaded experiment '{experiment_name}' with ID: {exp_id}"
+        )
         return exp_id
 
-    async def start_experiment(self, experiment_name: str, overwrite: bool = True) -> str:
+    async def start_experiment(
+        self, experiment_name: str, overwrite: bool = True
+    ) -> str:
         """
         Load and start an experiment.
 
@@ -194,8 +208,12 @@ class ZENConnection:
             Exception: If stopping the experiment fails
         """
         logger.debug(f"Stopping experiment with ID: {experiment_id}")
-        await self.experiment_service.stop(ExperimentServiceStopRequest(experiment_id=experiment_id))
-        logger.debug(f"Experiment with ID: {experiment_id} stopped successfully")
+        await self.experiment_service.stop(
+            ExperimentServiceStopRequest(experiment_id=experiment_id)
+        )
+        logger.debug(
+            f"Experiment with ID: {experiment_id} stopped successfully"
+        )
 
     async def _cleanup_existing_experiment(self, experiment_name: str) -> None:
         """
@@ -214,10 +232,14 @@ class ZENConnection:
         """
         # Get ZEN's default output folder
         request = ExperimentServiceGetImageOutputPathRequest()
-        folder_response = await self.experiment_service.get_image_output_path(request)
+        folder_response = await self.experiment_service.get_image_output_path(
+            request
+        )
 
         # Construct full path to experiment file
-        file_path = Path(folder_response.image_output_path) / f"{experiment_name}.czi"
+        file_path = (
+            Path(folder_response.image_output_path) / f"{experiment_name}.czi"
+        )
 
         # Delete if exists
         if file_path.exists():
@@ -245,7 +267,9 @@ class ZENConnection:
             Used to populate the UI dropdown in napari-started mode.
         """
         request = ExperimentServiceGetAvailableExperimentsRequest()
-        response = await self.experiment_service.get_available_experiments(request)
+        response = await self.experiment_service.get_available_experiments(
+            request
+        )
 
         experiment_names = sorted(exp.name for exp in response.experiments)
         logger.debug(f"Found {len(experiment_names)} available experiments")
@@ -275,15 +299,10 @@ class ExperimentContext:
     it was started by the application or by the user in ZEN Blue.
 
     Two Modes:
-    1. UI Mode (exp_started_by_ui=True):
-       - Application doesn't start experiments
-       - Monitors all running experiments
-       - No experiment_id available initially
-
-    2. API Mode (exp_started_by_ui=False):
-       - Application starts specific experiment
-       - Has experiment_id for targeted monitoring
-       - Can use status API for completion detection
+     ``exp_started_by_ui=True`` selects napari-started acquisition;
+     ``False`` selects passive watching of experiments started in ZEN.
+     Construction never triggers acquisition. The plugin starts only after
+     the user presses Start and arms the pipeline's experiment-ID filter.
     """
 
     def __init__(self, connection: ZENConnection, config: ZENConfig):
@@ -296,34 +315,28 @@ class ExperimentContext:
         """
         self.connection = connection
         self.config = config
-        self.experiment_id: str | None = None  # Set when experiment is started/loaded
+        self.experiment_id: str | None = (
+            None  # Set when experiment is started/loaded
+        )
         self._is_started = False  # True if this context started the experiment
 
-    async def initialize(self) -> str:
+    async def initialize(self) -> str | None:
+        """Explicitly start a selected experiment, or remain in watch mode.
+
+        This helper is for Python callers. Plugin connection setup does not
+        invoke it; plugin starts go through the filtered display pipeline.
         """
-        Initialize the experiment based on configuration mode.
-
-        Two initialization paths:
-        1. UI mode: Don't start anything, wait for user to start in ZEN
-        2. API mode: Start experiment via API
-
-        Returns:
-            Experiment ID (or None in UI mode)
-
-        Note:
-            In UI mode, experiment_id remains None until user starts experiment.
-            In API mode, experiment_id is available immediately.
-        """
-        if self.config.exp_started_by_ui:
-            # UI mode: Monitor experiments started by user in ZEN Blue
-            logger.debug("Experiment context initialized in UI/monitoring mode")
+        if self.is_monitoring_mode:
             logger.debug("Waiting for user to start experiment in ZEN Blue")
             self.experiment_id = None
 
         else:
-            # API mode: Start experiment programmatically
-            logger.debug(f"Starting experiment via API: {self.config.exp_name}")
-            self.experiment_id = await self.connection.start_experiment(self.config.exp_name, overwrite=True)
+            logger.debug(
+                f"Starting experiment via API: {self.config.exp_name}"
+            )
+            self.experiment_id = await self.connection.start_experiment(
+                self.config.exp_name, overwrite=True
+            )
             self._is_started = True
             logger.debug(f"Experiment started with ID: {self.experiment_id}")
 
@@ -331,14 +344,8 @@ class ExperimentContext:
 
     @property
     def is_monitoring_mode(self) -> bool:
-        """
-        Check if in monitoring mode (experiment started by UI).
-
-        Returns:
-            True if monitoring mode (user starts in ZEN Blue)
-            False if API mode (application starts experiment)
-        """
-        return self.config.exp_started_by_ui
+        """Return whether the initial mode watches acquisitions started in ZEN."""
+        return not self.config.exp_started_by_ui
 
     @property
     def is_started(self) -> bool:

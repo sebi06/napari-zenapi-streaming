@@ -43,8 +43,12 @@ directly to OME-ZARR without napari.
   unconfigured `--experiment` CLI mode also buffers the acquisition.
 - Out-of-order OME-ZARR frames use a bounded pending buffer. If the stream
   stays incomplete until the inactivity timeout, missing positions are
-  skipped in the output rather than recovered from ZEN. Inspect acquisition
-  logs and frame counts before relying on an incomplete result.
+  skipped rather than recovered from ZEN. The configured writer retains the
+  partial store, writes `acquisition_status.json`, and reports failure instead
+  of success. Inspect the report before using partial output.
+- Display mode currently assumes `uint16` input and normalizes every frame
+  for preview. Its restructured layers are not raw quantitative image data.
+  Use configured OME-ZARR output to retain raw GRAY8/GRAY16 intensities.
 
 ## Features
 
@@ -80,7 +84,7 @@ src/napari_zen_streaming/
   _widget.py           # Napari plugin widget entrypoint
   misc.py              # gRPC channel initialization from config.ini
   napari.yaml          # Plugin manifest
-  .env                 # Environment variable overrides (local)
+  .env                 # Editable-checkout fallback only; not packaged
 
 experiment_streaming_config.ini  # Experiment config for OME-ZARR streaming
 
@@ -93,38 +97,63 @@ docs/
 - ZEISS ZEN Blue with ZEN API Gateway installed
 - A valid ZEN control token
 - Access to the ZEN API certificate (`ZenApiPersonalSigningRootCA.pem`)
-- Conda or mamba recommended for environment setup
+- Python 3.11-3.13 with a Qt backend supported by napari
+- An authorized, compatible ZEISS `zen_api` wheel (not distributed on PyPI)
 
 ## Installation
 
-1. Create and activate the conda environment:
+Install the authorized ZEN API wheel into the same environment as napari:
+
+```powershell
+python -m pip install "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl"
+```
+
+Replace the example path with the wheel supplied for your gateway. Do not
+commit the wheel, token, or certificate to this repository without confirming
+redistribution rights. There is no public wheel download URL configured here.
+
+From this checkout, install the plugin:
+
+```bash
+python -m pip install .
+```
+
+For a downloaded release wheel, pass that wheel path instead of `.`. For
+development use `python -m pip install -e ".[dev,testing]"`.
+
+Alternatively, create the supplied Conda environment first, then install the
+authorized wheel and this plugin as above:
 
 ```bash
 conda env create -f python_env/env_zenapi_napari.yml
 conda activate zenapi-napari
 ```
 
-1. Install this package in editable mode:
-
-```bash
-pip install -e .
-```
-
-The plugin requires the ZEISS `zen_api` wheel, which is not a PyPI dependency.
-Install a compatible wheel from an authorized ZEISS distribution before using
-the plugin. Do not commit the wheel to this repository without confirming
-redistribution rights. The wheel URL in the Conda environment manifest is
-currently unavailable (HTTP 404); update it before using that installation
-route.
+The Conda manifest intentionally does not download `zen_api`; installing that
+wheel separately is required for both installation routes.
 
 ## Configuration
 
 ### 1) `config.ini` (required)
 
-Copy `config_example.ini` to `config.ini` in the repository root and update
-the ZEN API host, certificate path, and control token. The plugin requires
-this file. For the napari plugin, set `ZEN_CONFIG_FILE` in the package-local
-`.env` to use a different path; for standalone runs, pass `--config-file`.
+Create a user-owned gateway configuration:
+
+```bash
+python -m napari_zen_streaming.ZEN_config --init
+```
+
+The command prints the new path and never overwrites an existing file. Edit
+the host, certificate path, and control token before opening the plugin.
+The default directory is `%APPDATA%\napari-zenapi-streaming` on Windows and
+`$XDG_CONFIG_HOME/napari-zenapi-streaming` (or
+`~/.config/napari-zenapi-streaming`) elsewhere. Configuration does not belong
+inside `site-packages`.
+
+Set `ZEN_CONFIG_FILE` to use an existing gateway INI instead. The standalone
+app also accepts `--config-file`. Explicit relative paths resolve from the
+working directory. For source-checkout compatibility, an existing
+`config.ini` in the working directory or checkout root is used when no user
+configuration exists. User configuration takes priority over these fallbacks.
 
 ```ini
 [api]
@@ -145,13 +174,17 @@ certificate path shown above is a Windows-local example, not a Linux path.
 
 ### 2) Environment variables (optional)
 
-You can define these in the `.env` file at `src/napari_zen_streaming/.env`.
+Define settings in the process environment or a `.env` beside the user-owned
+`config.ini`. Set `ZEN_ENV_FILE` to load a different dotenv file; an explicit
+missing file is an error. Editable checkouts also retain the package-local
+`.env` as a fallback when no user settings file exists.
 
 | Variable                               | Meaning                                                                                      | Default            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------ |
 | `ZEN_EXP_NAME`                         | Initially selected experiment setup                                                          | `ZEN_API_overview` |
 | `ZEN_UI_START`                         | `true`: initially select napari-started Display; `false`: initially select passive ZEN watch | `true`             |
-| `ZEN_CONFIG_FILE`                      | Path to config file                                                                          | `config.ini`       |
+| `ZEN_CONFIG_FILE`                      | Path to gateway configuration                                                                | user directory     |
+| `ZEN_ENV_FILE`                         | Explicit optional settings file                                                              | user `.env`        |
 | `ZEN_CHANNEL_INDEX`                    | gRPC channel index filter (integer). Leave empty or unset to receive **all channels**        | unset (all)        |
 | `ZEN_RESTRUCTURE_TIMEOUT`              | Idle timeout (seconds) before final restructure in ZEN-started mode                          | `10.0`             |
 | `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` | Use the lightweight 2D latest-frame preview in Display mode                                  | `true`             |
@@ -159,23 +192,20 @@ You can define these in the `.env` file at `src/napari_zen_streaming/.env`.
 | `ZEN_LOG_DIR`                          | Directory containing the rotating `zen_streaming.log` file                                   | platform default   |
 | `ZEN_LOG_LEVEL`                        | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`                        | `INFO`             |
 
-The package-local `.env` supplies optional runtime settings such as the
+The optional `.env` supplies runtime settings such as the
 experiment name, startup mode, channel filter, display behavior, and the path
 to `config.ini`. It does not contain the ZEN API control token or certificate;
 those remain in the required `config.ini`.
 
-The standalone app loads `.env` without replacing variables already present in
-the process, then applies explicit CLI flags. Its precedence is CLI flags,
-process environment, `.env`, then code defaults. The napari plugin explicitly
-loads the package-local `.env` with `override=True`, so values set there take
-precedence over matching process environment variables. Variables absent from
-`.env` still fall back to the process environment and then code defaults.
+Both plugin and CLI preserve existing process environment values. Precedence
+is explicit CLI flags (where supported), process environment, `.env`, then
+code defaults. Only the selected dotenv file is loaded; files are not merged.
 
 To place the logfile in a custom directory, set an absolute path in the
-package-local `.env`, for example:
+user `.env`, for example:
 
 ```dotenv
-ZEN_LOG_DIR=F:\Zen_Output\logs
+ZEN_LOG_DIR=C:\Microscopy\logs
 ZEN_LOG_LEVEL=DEBUG
 ```
 
@@ -302,10 +332,20 @@ Bypasses the pipeline entirely.  When **Start** is clicked:
   `uint16` for `GRAY16`; payload length is validated before decoding. ZEN
   width is stored on X and height on Y without a rotation or transpose.
   Streamed X/Y stage positions and pixel scales retain the same axis names.
+  Auto-triggered runs accept only their returned experiment ID. Manually
+  armed runs pin to the first received experiment ID; ensure that first frame
+  belongs to the intended acquisition. Later unrelated frames are ignored
+  before decoding and frames without an experiment ID are rejected.
 5. The loop ends after every unique expected coordinate has arrived, or on
   inactivity timeout. On timeout, buffered frames are drained and truly
   missing slots are emitted with `stream.skip()` so the array stays
-  rectangular.
+  rectangular. The configured writer records expected/received counts and
+  missing `(t, s, m, c, z)` coordinates in `acquisition_status.json` inside
+  the output store. Missing frames raise `IncompleteAcquisitionError`;
+  the CLI exits nonzero and the plugin shows a warning containing the partial
+  output path. Partial stores are retained, but are not auto-opened and do
+  not receive post-acquisition pyramids. Other writer errors also fail the
+  run; a status report is guaranteed only after successful finalization.
 6. For generic acquisitions with multiple scenes or tiles, the raw tile
   streams are finalized into one TCZYX mosaic per scene. Streamed XYZ
   coordinates and physical pixel scaling determine placement; M identifies
@@ -332,8 +372,14 @@ Bypasses the pipeline entirely.  When **Start** is clicked:
   always delivered.
 
 The plugin and the configured CLI share the same writer. Both use a dedicated
-gRPC channel, avoiding frame loss from a competing pipeline reader; the
+gRPC channel while the display pipeline reader is suspended, avoiding frame
+loss from competing consumers. The
 unconfigured `--experiment` CLI mode instead buffers the full acquisition.
+That legacy buffered mode cannot certify a complete expected coordinate set;
+use configured mode for acquisition completeness reporting.
+
+Starting a new acquisition removes only layers created or opened by this
+plugin. Unrelated user layers and other plugins' dock widgets are retained.
 
 ### Plugin OME-ZARR defaults
 
@@ -449,12 +495,11 @@ python -m napari_zen_streaming.ZEN_stream2omezarr \
   records only milestones, warnings, and errors.
 - Logging format: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
 
-To see live terminal records, launch napari from the Pixi workspace and keep
+To see live terminal records, launch napari in the configured environment and keep
 that terminal open:
 
 ```powershell
-cd F:\Pixi_Projects\zen_czi\zen-pixi-workspace
-pixi run start-napari
+napari
 ```
 
 Logging starts when the **ZEN API Streaming** plugin widget is opened. A napari
@@ -481,10 +526,10 @@ PowerShell terminal:
 Get-Content "$env:LOCALAPPDATA\napari-zenapi-streaming\logs\zen_streaming.log" -Wait
 ```
 
-When `ZEN_LOG_DIR=F:\Zen_Output\logs`, use the configured location instead:
+When `ZEN_LOG_DIR=C:\Microscopy\logs`, use the configured location instead:
 
 ```powershell
-Get-Content "F:\Zen_Output\logs\zen_streaming.log" -Wait
+Get-Content "C:\Microscopy\logs\zen_streaming.log" -Wait
 ```
 
 `Get-Content` prints the existing records and `-Wait` keeps the command
@@ -494,9 +539,9 @@ to follow the new active `zen_streaming.log` file.
 
 ## Architecture
 
-The proposed optimization for preventing live-preview rendering from falling
-behind pixel delivery is documented in the
-[Live Preview Performance Plan](docs/live_preview_performance_plan.md).
+The latest-frame preview avoids rebuilding a dense history array during
+acquisition. Sparse frames remain available for final scene assembly; disabling
+the preview option restores full-history live display.
 
 ### Display mode data flow
 
@@ -561,7 +606,8 @@ Editable source files:
 
 ## Troubleshooting
 
-- `FileNotFoundError` for `config.ini`: check `ZEN_CONFIG_FILE` path and working directory.
+- Missing `config.ini`: run `python -m napari_zen_streaming.ZEN_config --init`,
+  populate the template, or set `ZEN_CONFIG_FILE` to an existing file.
 - TLS or certificate issues: verify `cert_file` path and that the file is readable.
 - No experiments in dropdown: confirm ZEN API Gateway is running and token is valid.
 - Viewer not updating: check `zen_streaming.log` in the user log directory described above for pipeline errors.
@@ -570,8 +616,9 @@ Editable source files:
   without the plugin detecting it (e.g. network glitch), click **Stop** to
   dismiss the bar.  Clicking **Start** on the next experiment also clears any
   stale bar automatically.
-- **Frames received in Display mode while OME-ZARR mode is active:** harmless —
-  the pipeline discards frames when the standalone writer is the active path.
+- **Incomplete acquisition:** inspect `acquisition_status.json` and the warning's
+  partial-store path. Check frame counts, gateway logs, and inactivity timeout
+  before retrying; a rectangular output array does not imply complete data.
 - **Channel filter not taking effect:** ensure no experiment is currently
   running; the reader restarts on combo box change, but an in-flight gRPC
   stream may buffer a few straggler frames.
@@ -581,14 +628,39 @@ Editable source files:
 - Install development extras:
 
 ```bash
-pip install -e .[dev]
+python -m pip install -e ".[dev,testing]" build
+python -m pytest -q src/napari_zen_streaming/_tests
+python -m ruff check src/napari_zen_streaming
+python -m black --check src/napari_zen_streaming
+python -m build --sdist --wheel
 ```
 
 - Format settings are defined in `pyproject.toml` (Black, line length 79).
-- Current automated tests are minimal (`src/napari_zen_streaming/_tests`).
+- Tests mock the gateway and cover routing, partial acquisitions, mosaics,
+  metadata refresh, dtype handling, progress, configuration, and layer ownership.
+- Local release validation uses Pixi `default`: Python 3.12.14, napari 0.9.1,
+  ome-writers 0.3.2, ngff-zarr 0.47.0, and zen-api 2026.11.1. This records one
+  tested environment, not a claim that every gateway version is compatible.
+- CI checks Python 3.11-3.13 on Windows, Linux, and macOS. Pushes and pull
+  requests target `main`; version tags trigger publishing only after tests pass.
 - CI requires a repository secret named `ZEN_API_WHEEL_URL` pointing to an
   authorized, reachable `zen_api` wheel. Test jobs fail explicitly without it;
   forked pull requests cannot use repository secrets by default.
+
+### Before tagging a release
+
+- Configure an authorized, reachable `ZEN_API_WHEEL_URL` secret and confirm the
+  full CI matrix passes. Local tests do not replace this check.
+- Choose the release version, update `pyproject.toml` and `CHANGELOG.md`, and
+  verify the tag matches. No release version is selected by the cleanup.
+- Install the built wheel in a clean environment, initialize user configuration,
+  and verify plugin discovery without relying on this checkout.
+- On a real ZEN gateway, test watch/start Display modes, manual/auto-triggered
+  OME-ZARR, multiple channels and tiles, HCS wells, and pyramid generation.
+- Interrupt a real acquisition: confirm a visible warning, non-success status,
+  preserved partial output, and correct missing-coordinate reporting.
+- Verify Stop, disconnect, viewer close, repeated runs, and preservation of
+  unrelated layers and docks. Measure throughput and memory at production size.
 
 ## Authors
 

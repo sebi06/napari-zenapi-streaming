@@ -14,7 +14,9 @@ _MANAGED_HANDLER = "_napari_zen_streaming_handler"
 
 def configured_log_level(level: int | str | None = None) -> int:
     """Return a numeric log level from an argument or ``ZEN_LOG_LEVEL``."""
-    configured_level = level if level is not None else os.getenv("ZEN_LOG_LEVEL", "INFO")
+    configured_level = (
+        level if level is not None else os.getenv("ZEN_LOG_LEVEL", "INFO")
+    )
     if isinstance(configured_level, int):
         return configured_level
 
@@ -31,9 +33,13 @@ def default_log_dir() -> Path:
         return Path(configured_dir).expanduser()
 
     if sys.platform == "win32":
-        base_dir = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        base_dir = Path(
+            os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")
+        )
     else:
-        base_dir = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+        base_dir = Path(
+            os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state")
+        )
     return base_dir / "napari-zenapi-streaming" / "logs"
 
 
@@ -69,7 +75,9 @@ def configure_logging(
             package_logger.removeHandler(handler)
             handler.close()
 
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     terminal_handler = logging.StreamHandler(sys.stdout)
     log_file = target_dir / "zen_streaming.log"
     file_handler = RotatingFileHandler(

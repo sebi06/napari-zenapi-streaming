@@ -64,8 +64,10 @@ dependencies:
       - pylibCZIrw
       - pip-system-certs
       - python-dotenv
-      - https://raw.githubusercontent.com/zeiss-microscopy/OAD/e7692b6a4038daee1179b98950a601df6125b23c/ZEN-API/python_package/zen_api-2026.05.1/dist/zen_api-2026.05.1-py3-none-any.whl
       - ome-writers[acquire-zarr]
+
+    # Install an authorized, compatible zen_api wheel separately after activation.
+    # See README.md; the wheel is not redistributed by this project.
 
 # Create an environment - use conda or mamba
 # conda env create --file env_zenapi_napari.yml

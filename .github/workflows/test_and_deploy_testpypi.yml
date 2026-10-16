@@ -3,18 +3,12 @@ name: test_and_deploy_testpypi
 on:
     push:
         branches:
-            - master
-            - npe2
-            - use_zenapi_package
-            - work-in-progress
-            - work_in_progress
+            - main
         tags:
             - "testpypi-v*"
     pull_request:
         branches:
-            - master
-            - npe2
-            - use_zenapi_package
+            - main
     workflow_dispatch:
 
 jobs:
@@ -52,7 +46,7 @@ jobs:
             - name: Install dependencies
               run: |
                   python -m pip install --upgrade pip
-                  python -m pip install -e .[testing] build ruff
+                  python -m pip install -e .[testing] build ruff black
 
             - name: Install ZEN API wheel
               shell: bash
@@ -65,8 +59,11 @@ jobs:
                   fi
                   python -m pip install "$ZEN_API_WHEEL_URL"
 
-            - name: Check Python correctness
-              run: python -m ruff check --select E4,E7,E9,F src/napari_zen_streaming
+            - name: Check code quality
+              run: python -m ruff check src/napari_zen_streaming
+
+            - name: Check formatting
+              run: python -m black --check src/napari_zen_streaming
 
             - name: Run tests
               uses: aganders3/headless-gui@v2
@@ -93,7 +90,7 @@ jobs:
             - name: Install publish dependencies
               run: |
                   python -m pip install --upgrade pip
-                  python -m pip install -U setuptools setuptools_scm wheel twine build
+                  python -m pip install -U setuptools wheel twine build
 
             - name: Build and publish to TestPyPI
               env:

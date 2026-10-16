@@ -35,7 +35,9 @@ def _tile(
 
 def test_calculate_scene_geometry_places_overlapping_tiles() -> None:
     """Overlapping tiles share pixels without enlarging both footprints."""
-    geometry = calculate_scene_geometry([_tile(0, 4.5, 4.5), _tile(1, 12.5, 4.5)])
+    geometry = calculate_scene_geometry(
+        [_tile(0, 4.5, 4.5), _tile(1, 12.5, 4.5)]
+    )
 
     assert (geometry.height, geometry.width) == (10, 18)
     assert geometry.origin_y == pytest.approx(0.0)
@@ -48,7 +50,9 @@ def test_calculate_scene_geometry_places_overlapping_tiles() -> None:
 
 def test_calculate_scene_geometry_preserves_irregular_gaps() -> None:
     """Stage-position gaps remain empty space in the mosaic canvas."""
-    geometry = calculate_scene_geometry([_tile(0, 4.5, 4.5), _tile(1, 19.5, 16.5)])
+    geometry = calculate_scene_geometry(
+        [_tile(0, 4.5, 4.5), _tile(1, 19.5, 16.5)]
+    )
 
     assert (geometry.height, geometry.width) == (22, 25)
     assert [(tile.y_offset, tile.x_offset) for tile in geometry.tiles] == [

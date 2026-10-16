@@ -16,9 +16,14 @@ def _frame_key(scene: int, tile: int, z_index: int) -> tuple[int, ...]:
 def test_status_finish_waits_for_trailing_scene_tiles() -> None:
     """The final four scene tiles arriving after status are retained."""
     viewer = object.__new__(StreamingViewer)
-    all_keys = {_frame_key(scene, tile, z_index) for scene in range(2) for tile in range(8) for z_index in range(3)}
+    all_keys = {
+        _frame_key(scene, tile, z_index)
+        for scene in range(2)
+        for tile in range(8)
+        for z_index in range(3)
+    }
     trailing_keys = {_frame_key(1, tile, 2) for tile in range(4, 8)}
-    viewer.frame_data = {key: None for key in all_keys - trailing_keys}
+    viewer.frame_data = dict.fromkeys(all_keys - trailing_keys)
     viewer.metadata_buffer = deque()
     viewer._selected_experiment_metadata = SimpleNamespace(
         time_points=1,
@@ -29,6 +34,7 @@ def test_status_finish_waits_for_trailing_scene_tiles() -> None:
     )
     viewer._effective_channel_index = None
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer._mode_index = 1
     viewer._expected_total_frames = 48
     viewer.config = SimpleNamespace(restructure_timeout=0.5)
     viewer.last_frame_time = time.time()

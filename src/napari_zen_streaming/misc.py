@@ -16,14 +16,13 @@ import ssl
 from pathlib import Path
 
 from grpclib.client import Channel
-from pydantic import ValidationError
 
 
 def initialize_zenapi(
     config_file: str | Path = "config.ini",
 ) -> tuple[Channel, list[tuple[str, str]]]:
     """
-    Create an gRPC channel for ZEN-API using the specified configuration file.
+    Create a TLS-verified gRPC channel using the gateway configuration.
 
     Args:
         config_file (str | Path): Path to the configuration file. Can be a string or Path object.
@@ -37,22 +36,16 @@ def initialize_zenapi(
         FileNotFoundError: If the configuration file does not exist.
     """
 
-    # Convert to Path object and resolve to absolute path
     config_path = Path(config_file).resolve()
 
-    # Check if config file exists
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    # get the configuration
     config = configparser.ConfigParser()
     config.read(config_path)
 
-    # Create SSL context
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
-    # Load a "certification authority" (CA) certificate
-    # Resolve cert_file path relative to config file location if it's relative
     cert_file = Path(config["api"]["cert_file"])
     if not cert_file.is_absolute():
         cert_file = (config_path.parent / cert_file).resolve()
@@ -61,26 +54,12 @@ def initialize_zenapi(
     context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True
 
-    # Set protocol which should be used during the SSL/TLS handshake
     context.set_alpn_protocols(["h2"])
-    channel = Channel(host=config["api"]["host"], port=int(config["api"]["port"]), ssl=context)
+    channel = Channel(
+        host=config["api"]["host"],
+        port=int(config["api"]["port"]),
+        ssl=context,
+    )
     metadata = [("control-token", config["api"]["control-token"])]
 
     return channel, metadata
-
-
-def path_validator(v):
-    """Returns a Path object.
-
-    Args:
-        v: A string or Path object.
-
-    Returns:
-        A Path object.
-
-    Raises:
-        ValidationError: If the value is not a valid path.
-    """
-    if isinstance(v, str | Path):
-        return Path(v)
-    raise ValidationError("value is not a valid path")

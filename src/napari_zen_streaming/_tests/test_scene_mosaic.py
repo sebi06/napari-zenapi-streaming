@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,7 +102,15 @@ def test_channel_subscriptions_can_start_before_server_headers() -> None:
             events.append(("ready", self.index))
 
     class Channel:
-        def request(self, _route, _cardinality, _request_type, _response_type, *, metadata):
+        def request(
+            self,
+            _route,
+            _cardinality,
+            _request_type,
+            _response_type,
+            *,
+            metadata,
+        ):
             assert metadata == {"authorization": "test"}
             return Stream(len([event for event in events if event[0] == "sent"]))
 
@@ -165,10 +174,12 @@ def test_assemble_scene_plane_merges_tiles_by_coordinates() -> None:
 
 
 @pytest.mark.parametrize("start_from_script", [False, True])
+@pytest.mark.parametrize("incomplete", [False, True])
 def test_configured_hcs_stream_writes_merged_scene_directly(
     tmp_path: Path,
     monkeypatch,
     start_from_script: bool,
+    incomplete: bool,
 ) -> None:
     """HCS streaming writes one merged plane without a tile-store rewrite."""
     frames = []
@@ -177,6 +188,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         frames.append(
             SimpleNamespace(
                 frame_data=SimpleNamespace(
+                    experiment_id="experiment-1",
                     frame_position=SimpleNamespace(
                         t=0,
                         z=0,
@@ -198,6 +210,9 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
             )
         )
 
+    unrelated_response = SimpleNamespace(frame_data=SimpleNamespace(experiment_id="unrelated-experiment"))
+    frames.insert(0 if start_from_script else 1, unrelated_response)
+
     class _Channel:
         def __init__(self) -> None:
             self.closed = False
@@ -211,7 +226,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
             """Return dimensions matching the fake stream."""
             return SimpleNamespace(
                 status=SimpleNamespace(
-                    time_points_count=1,
+                    time_points_count=2 if incomplete else 1,
                     channels_count=1,
                     zstack_slices_count=1,
                     scenes_count=1,
@@ -251,6 +266,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     output_streams = []
 
     def _create_stream(settings):
+        Path(settings.root_path).mkdir(parents=True)
         output_stream = _OutputStream(settings)
         output_streams.append(output_stream)
         return output_stream
@@ -317,6 +333,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
 
     config = _experiment_config(use_hcs_layout=True)
     config.start_from_script = start_from_script
+    config.time_points = 2 if incomplete else 1
     config.output_dir = str(tmp_path)
     config.scenes = 1
     config.pyramid_levels = 2
@@ -330,32 +347,51 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     ]
 
     started_ids = []
-    zarr_path = asyncio.run(
-        stream_module.stream_to_omezarr_with_config(
-            config,
-            progress_callback=lambda _current, _total: None,
-            on_experiment_started=started_ids.append,
-        )
+    progress = []
+    acquisition = stream_module.stream_to_omezarr_with_config(
+        config,
+        progress_callback=lambda current, total: progress.append((current, total)),
+        on_experiment_started=started_ids.append,
     )
+    if incomplete:
+        with pytest.raises(stream_module.IncompleteAcquisitionError) as error:
+            asyncio.run(acquisition)
+        zarr_path = error.value.zarr_path
+        assert error.value.received_frames == 2
+        assert error.value.expected_frames == 4
+    else:
+        zarr_path = asyncio.run(acquisition)
+
+    status = json.loads((zarr_path / "acquisition_status.json").read_text())
+    assert status["complete"] is not incomplete
+    assert status["experiment_id"] == "experiment-1"
+    assert status["received_frames"] == 2
+    assert status["missing_coordinates"] == ([[1, 0, 0, 0, 0], [1, 0, 1, 0, 0]] if incomplete else [])
+    assert progress[-1] == (-3 if incomplete else -2, 0)
+    assert (-2, 0) not in progress if incomplete else (-2, 0) in progress
 
     assert len(output_streams) == 1
     output_stream = output_streams[0]
-    assert output_stream.settings.shape == (1, 2, 4)
+    assert output_stream.settings.shape == ((2, 1, 2, 4) if incomplete else (1, 2, 4))
     assert len(output_stream.appended) == 1
     mosaic, metadata = output_stream.appended[0]
     assert mosaic.tolist() == [[2, 2, 4, 4], [2, 2, 4, 4]]
     assert metadata["position_x"] == 0.0
     assert metadata["position_y"] == 0.0
-    assert output_stream.skipped == 0
+    assert output_stream.skipped == int(incomplete)
     assert startup_events == (["sent", "started", "ready"] if start_from_script else [])
     assert started_ids == (["experiment-1"] if start_from_script else [])
-    assert pyramid_calls == [
-        (
-            zarr_path,
-            2,
-            config.spatial_shard_size_chunks,
-        )
-    ]
+    assert pyramid_calls == (
+        []
+        if incomplete
+        else [
+            (
+                zarr_path,
+                2,
+                config.spatial_shard_size_chunks,
+            )
+        ]
+    )
 
 
 def test_find_omezarr_image_paths_discovers_hcs_positions(

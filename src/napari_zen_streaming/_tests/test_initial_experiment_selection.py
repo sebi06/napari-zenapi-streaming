@@ -1,13 +1,14 @@
 """Tests for initial experiment selection metadata loading."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from napari_zen_streaming import main
-from napari_zen_streaming import ZEN_stream2omezarr
+from napari_zen_streaming import ZEN_stream2omezarr, _widget, main
+from napari_zen_streaming.ZEN_config import ZENConfig
 from napari_zen_streaming.ZEN_omezarr import create_plugin_experiment_config
 from napari_zen_streaming.ZEN_ui import StreamingViewer
 
@@ -55,6 +56,83 @@ class _ExperimentDropdown:
         return self.items[self.current_index]
 
 
+@pytest.mark.parametrize("experiments", [[], ["Example"]])
+@pytest.mark.parametrize("connection_fails", [False, True])
+def test_widget_initialization_preserves_unrelated_docks(
+    experiments, connection_fails, monkeypatch
+) -> None:
+    """Initialization owns one dock and closes its event loop on failure."""
+    events = []
+    applications = []
+    widget = MagicMock()
+    unrelated_dock = MagicMock()
+    unrelated_dock.widget.return_value = object()
+    own_dock = MagicMock()
+    own_dock.widget.return_value = widget
+    removed = []
+    window = SimpleNamespace(
+        dock_widgets={
+            "Unrelated": unrelated_dock,
+            "ZEN API Streaming": own_dock,
+        },
+        remove_dock_widget=removed.append,
+    )
+
+    class Application:
+        def __init__(self, config):
+            events.append("application")
+            self.connection = MagicMock()
+            applications.append(self)
+
+        async def setup_connection(self):
+            if connection_fails:
+                raise ConnectionError("unavailable")
+            return experiments
+
+        def setup_viewer(self, available):
+            assert available == experiments
+            events.append("viewer")
+
+        async def run(self):
+            events.append("pipeline")
+
+    class Worker:
+        def __init__(self, function):
+            self.function = function
+            self.callbacks = []
+            self.returned = SimpleNamespace(connect=self.callbacks.append)
+
+        def start(self):
+            events.append("worker")
+            result = self.function()
+            for callback in self.callbacks:
+                callback(result)
+
+    monkeypatch.setattr(main, "ZENApplication", Application)
+    monkeypatch.setattr(ZENConfig, "from_env", lambda: object())
+    monkeypatch.setattr(
+        _widget, "thread_worker", lambda function: lambda: Worker(function)
+    )
+    monkeypatch.setattr(_widget, "QWidget", lambda: widget)
+    monkeypatch.setattr(_widget, "QVBoxLayout", MagicMock())
+    monkeypatch.setattr(_widget, "QLabel", MagicMock())
+    monkeypatch.setattr(_widget, "configure_logging", lambda: None)
+    monkeypatch.setattr(_widget, "load_runtime_settings", lambda: None)
+    monkeypatch.setattr(
+        main.napari, "current_viewer", lambda: SimpleNamespace(window=window)
+    )
+
+    assert _widget.create_zen_widget() is widget
+
+    assert events[0] == "application"
+    assert removed == ([] if connection_fails else [own_dock])
+    assert applications[0].worker_loop.is_closed()
+    if connection_fails:
+        applications[0].connection.close.assert_called_once()
+    else:
+        assert events[-1] == "pipeline"
+
+
 class _ValueControl:
     """Minimal value widget used by metadata application tests."""
 
@@ -95,7 +173,14 @@ class _ChannelCombo:
 
     def findData(self, channel_index: int | None) -> int:
         """Find a channel by its ZEN index."""
-        return next((index for index, (_, value) in enumerate(self.items) if value == channel_index), -1)
+        return next(
+            (
+                index
+                for index, (_, value) in enumerate(self.items)
+                if value == channel_index
+            ),
+            -1,
+        )
 
     def setCurrentIndex(self, index: int) -> None:
         """Select one channel choice."""
@@ -116,7 +201,9 @@ def test_population_refreshes_configured_initial_experiment() -> None:
     viewer.dropdown = _ExperimentDropdown()
     viewer.config = SimpleNamespace(exp_name="Z Stack")
     refreshed: list[str] = []
-    viewer.refresh_selected_experiment_metadata = lambda: refreshed.append(viewer.dropdown.currentText())
+    viewer.refresh_selected_experiment_metadata = lambda: refreshed.append(
+        viewer.dropdown.currentText()
+    )
 
     viewer.populate_experiments(["Time Series", "Z Stack"])
 
@@ -132,51 +219,77 @@ def test_refresh_reloads_metadata_without_changing_selection() -> None:
     viewer.dropdown = SimpleNamespace(currentText=lambda: "Plate Scan")
     viewer.dim_panel = SimpleNamespace(setVisible=lambda visible: None)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 2)
+    viewer._mode_index = 2
     viewer.connection = object()
     viewer._selected_experiment_metadata = object()
     viewer._expected_total_frames = 10
     viewer._metadata_request_id = 0
     refreshed = SimpleNamespace(experiment_name="Plate Scan", channels=5)
-    viewer._load_selected_experiment_metadata = AsyncMock(return_value=refreshed)
+    viewer._load_selected_experiment_metadata = AsyncMock(
+        return_value=refreshed
+    )
     received: list[object] = []
-    viewer.signals = SimpleNamespace(experiment_metadata_loaded=SimpleNamespace(emit=received.append))
+    viewer.signals = SimpleNamespace(
+        experiment_metadata_loaded=SimpleNamespace(emit=received.append)
+    )
     viewer.safe_execution = lambda callback: asyncio.run(callback())
 
     viewer.refresh_selected_experiment_metadata()
 
-    viewer._load_selected_experiment_metadata.assert_awaited_once_with("Plate Scan")
+    viewer._load_selected_experiment_metadata.assert_awaited_once_with(
+        "Plate Scan"
+    )
     assert received == [refreshed]
     assert viewer._selected_experiment_metadata is None
     assert viewer._expected_total_frames is None
 
 
-def test_start_reload_uses_fresh_metadata_and_ignores_outdated_result() -> None:
+def test_start_reload_uses_fresh_metadata_and_ignores_outdated_result() -> (
+    None
+):
     """Every start fetches XML, but superseded results must not update the UI."""
     viewer = StreamingViewer.__new__(StreamingViewer)
     viewer._metadata_request_id = 1
-    viewer._selected_experiment_metadata = SimpleNamespace(experiment_name="Plate Scan", channels=2)
+    viewer._selected_experiment_metadata = SimpleNamespace(
+        experiment_name="Plate Scan", channels=2
+    )
     updated = SimpleNamespace(experiment_name="Plate Scan", channels=5)
     viewer._load_selected_experiment_metadata = AsyncMock(return_value=updated)
     published: list[object] = []
-    viewer.signals = SimpleNamespace(experiment_metadata_loaded=SimpleNamespace(emit=published.append))
+    viewer.signals = SimpleNamespace(
+        experiment_metadata_loaded=SimpleNamespace(emit=published.append)
+    )
 
-    assert asyncio.run(viewer._reload_metadata_for_start("Plate Scan", 1)) is updated
+    assert (
+        asyncio.run(viewer._reload_metadata_for_start("Plate Scan", 1))
+        is updated
+    )
     viewer._metadata_request_id = 2
-    assert asyncio.run(viewer._reload_metadata_for_start("Plate Scan", 1)) is updated
+    assert (
+        asyncio.run(viewer._reload_metadata_for_start("Plate Scan", 1))
+        is updated
+    )
 
     assert viewer._load_selected_experiment_metadata.await_count == 2
     assert published == [updated]
 
 
-@pytest.mark.parametrize("mode", [1, 2])
-def test_start_refreshes_selected_experiment_before_acquisition(mode: int, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("mode", "incomplete"), [(1, False), (2, False), (2, True)]
+)
+def test_start_refreshes_selected_experiment_before_acquisition(
+    mode: int, incomplete: bool, monkeypatch
+) -> None:
     """Both napari start paths fetch current XML before acquiring or writing."""
     viewer = StreamingViewer.__new__(StreamingViewer)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: mode)
+    viewer._mode_index = mode
     viewer.dropdown = SimpleNamespace(currentText=lambda: "Plate Scan")
     viewer.dim_panel = SimpleNamespace(setVisible=lambda visible: None)
     viewer.connection = object()
-    viewer._selected_experiment_metadata = SimpleNamespace(experiment_name="Plate Scan", channels=2)
+    viewer._selected_experiment_metadata = SimpleNamespace(
+        experiment_name="Plate Scan", channels=2
+    )
     viewer._expected_total_frames = 2
     viewer._metadata_request_id = 0
     viewer.frame_data = {}
@@ -193,12 +306,14 @@ def test_start_refreshes_selected_experiment_before_acquisition(mode: int, monke
     viewer._monitor_experiment_status = AsyncMock()
     published: list[object] = []
     opened: list[str] = []
+    warnings: list[str] = []
     viewer.signals = SimpleNamespace(
         show_start_button=SimpleNamespace(emit=lambda enabled: None),
         show_stop_button=SimpleNamespace(emit=lambda visible: None),
         experiment_metadata_loaded=SimpleNamespace(emit=published.append),
         update_progress=SimpleNamespace(emit=lambda current, total: None),
         open_omezarr=SimpleNamespace(emit=opened.append),
+        acquisition_warning=SimpleNamespace(emit=warnings.append),
     )
     fresh = SimpleNamespace(
         experiment_name="Plate Scan",
@@ -218,36 +333,51 @@ def test_start_refreshes_selected_experiment_before_acquisition(mode: int, monke
 
     viewer._load_selected_experiment_metadata = load_metadata
     pipeline = SimpleNamespace(
-        start_targeted_experiment=AsyncMock(side_effect=lambda name: events.append("start") or "exp-id"),
+        start_targeted_experiment=AsyncMock(
+            side_effect=lambda name: events.append("start") or "exp-id"
+        ),
         suspend_reader=AsyncMock(),
         resume_reader=AsyncMock(),
     )
     viewer.app = SimpleNamespace(pipeline=pipeline)
-    viewer._create_plugin_omezarr_config = lambda name: create_plugin_experiment_config(
-        experiment_name=name,
-        output_dir=".",
-        dtype="Gray16",
-        compression=None,
-        zenapi_config="config.ini",
-        start_from_script=True,
-        use_hcs_layout=False,
-        keep_source_tiles=False,
+    viewer._create_plugin_omezarr_config = (
+        lambda name: create_plugin_experiment_config(
+            experiment_name=name,
+            output_dir=".",
+            dtype="Gray16",
+            compression=None,
+            zenapi_config="config.ini",
+            start_from_script=True,
+            use_hcs_layout=False,
+            keep_source_tiles=False,
+        )
     )
 
     async def write_zarr(ecfg, **kwargs):
         events.append("write")
         kwargs["on_experiment_started"]("experiment-1")
         assert viewer.current_experiment_id == "experiment-1"
+        if incomplete:
+            raise ZEN_stream2omezarr.IncompleteAcquisitionError(
+                Path("partial.zarr"), 2, 3
+            )
         return "result.zarr"
 
     writer = AsyncMock(side_effect=write_zarr)
-    monkeypatch.setattr(ZEN_stream2omezarr, "stream_to_omezarr_with_config", writer)
+    monkeypatch.setattr(
+        ZEN_stream2omezarr, "stream_to_omezarr_with_config", writer
+    )
 
     viewer.on_start_clicked()
 
     assert published == [fresh]
-    assert events == (["reload", "start"] if mode == 1 else ["reload", "write"])
-    assert opened == (["result.zarr"] if mode == 2 else [])
+    assert events == (
+        ["reload", "start"] if mode == 1 else ["reload", "write"]
+    )
+    assert opened == (["result.zarr"] if mode == 2 and not incomplete else [])
+    assert len(warnings) == int(incomplete)
+    if incomplete:
+        assert "2/3 frames" in warnings[0]
     if mode == 2:
         assert writer.await_args.args[0].channels == 5
         assert writer.await_args.args[0].time_points == 3
@@ -283,7 +413,9 @@ def test_stop_omezarr_before_start_keeps_stop_available() -> None:
     viewer.current_experiment_id = None
     viewer._standalone_zarr_active = True
     viewer.connection = SimpleNamespace(stop_experiment=AsyncMock())
-    viewer.signals = SimpleNamespace(show_stop_button=SimpleNamespace(emit=lambda enabled: None))
+    viewer.signals = SimpleNamespace(
+        show_stop_button=SimpleNamespace(emit=lambda enabled: None)
+    )
 
     viewer.on_stop_clicked()
 
@@ -300,10 +432,15 @@ def test_selected_metadata_updates_derived_total_frames() -> None:
     viewer.spin_z_spacing = _ValueControl()
     viewer.label_tiles = _ValueControl()
     viewer.label_scenes = _ValueControl()
-    viewer.label_total = SimpleNamespace(setText=lambda text: totals.append(text))
+    viewer.label_total = SimpleNamespace(
+        setText=lambda text: totals.append(text)
+    )
     visibility: list[bool] = []
-    viewer.dim_panel = SimpleNamespace(setVisible=lambda visible: visibility.append(visible))
+    viewer.dim_panel = SimpleNamespace(
+        setVisible=lambda visible: visibility.append(visible)
+    )
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer._mode_index = 1
     viewer._refresh_channel_filter = lambda: None
     viewer.chk_hcs_layout = SimpleNamespace(setChecked=lambda _checked: None)
     viewer._update_hcs_layout_option = lambda: None
@@ -349,7 +486,11 @@ def test_mode_switch_keeps_dimensions_and_hides_writer_options() -> None:
         setattr(
             viewer,
             name,
-            SimpleNamespace(setVisible=lambda visible, name=name: visibility[name].append(visible)),
+            SimpleNamespace(
+                setVisible=lambda visible, name=name: visibility[name].append(
+                    visible
+                )
+            ),
         )
     viewer._selected_experiment_metadata = object()
     viewer._update_hcs_layout_option = lambda: None
@@ -371,26 +512,37 @@ def test_channel_filter_uses_active_display_workflow() -> None:
     viewer = StreamingViewer.__new__(StreamingViewer)
     mode = [1]
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: mode[0])
+    viewer._mode_index = mode[0]
     viewer.dropdown = SimpleNamespace(currentText=lambda: "Plate Scan")
     viewer.channel_filter_combo = _ChannelCombo()
-    viewer._selected_experiment_metadata = SimpleNamespace(experiment_name="Plate Scan", channels=3)
+    viewer._selected_experiment_metadata = SimpleNamespace(
+        experiment_name="Plate Scan", channels=3
+    )
     viewer._pending_channel_index = 2
     viewer._effective_channel_index = 2
     viewer.app = SimpleNamespace(pipeline=None)
 
     viewer._refresh_channel_filter()
-    assert viewer.channel_filter_combo.items == [("All channels", None), ("1", 0), ("2", 1), ("3", 2)]
+    assert viewer.channel_filter_combo.items == [
+        ("All channels", None),
+        ("1", 0),
+        ("2", 1),
+        ("3", 2),
+    ]
     assert viewer.channel_filter_combo.currentData() == 2
 
     viewer._selected_experiment_metadata = None
     viewer._refresh_channel_filter()
     assert viewer.channel_filter_combo.items == [("All channels", None)]
     assert viewer._pending_channel_index == 2
-    viewer._selected_experiment_metadata = SimpleNamespace(experiment_name="Plate Scan", channels=3)
+    viewer._selected_experiment_metadata = SimpleNamespace(
+        experiment_name="Plate Scan", channels=3
+    )
     viewer._refresh_channel_filter()
     assert viewer.channel_filter_combo.currentData() == 2
 
     mode[0] = 0
+    viewer._mode_index = mode[0]
     viewer._refresh_channel_filter()
     assert len(viewer.channel_filter_combo.items) == 17
     assert viewer.channel_filter_combo.items[-1] == ("16", 15)
@@ -399,21 +551,29 @@ def test_channel_filter_uses_active_display_workflow() -> None:
     assert viewer._effective_channel_index == 4
 
     mode[0] = 1
+    viewer._mode_index = mode[0]
     viewer._refresh_channel_filter()
     assert len(viewer.channel_filter_combo.items) == 4
     assert viewer.channel_filter_combo.currentData() is None
     assert viewer._effective_channel_index is None
 
     mode[0] = 0
+    viewer._mode_index = mode[0]
     assert viewer._expected_display_frame_count() == 0
 
 
 def test_plugin_setup_waits_for_explicit_start(monkeypatch) -> None:
     """Connecting to ZEN must not start the configured experiment."""
-    connection = SimpleNamespace(get_experiments=lambda: asyncio.sleep(0, result=["Plate Scan"]))
-    context = SimpleNamespace(initialize=lambda: (_ for _ in ()).throw(AssertionError("started")))
+    connection = SimpleNamespace(
+        get_experiments=lambda: asyncio.sleep(0, result=["Plate Scan"])
+    )
+    context = SimpleNamespace(
+        initialize=lambda: (_ for _ in ()).throw(AssertionError("started"))
+    )
     monkeypatch.setattr(main, "ZENConnection", lambda config: connection)
-    monkeypatch.setattr(main, "ExperimentContext", lambda connection, config: context)
+    monkeypatch.setattr(
+        main, "ExperimentContext", lambda connection, config: context
+    )
     app = main.ZENApplication.__new__(main.ZENApplication)
     app.config = SimpleNamespace()
 
@@ -424,5 +584,6 @@ def test_watch_mode_does_not_start_selected_experiment() -> None:
     """Passive ZEN watching never uses the selected-setup start action."""
     viewer = StreamingViewer.__new__(StreamingViewer)
     viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 0)
+    viewer._mode_index = 0
 
     assert viewer.on_start_clicked() is None

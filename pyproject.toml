@@ -65,7 +65,7 @@ napari-zenapi-streaming = "napari_zen_streaming:napari.yaml"
 "Source Code" = "https://github.com/sebi06/napari-zenapi-streaming"
 
 [build-system]
-requires = ["setuptools>=80", "wheel", "setuptools-scm>=6.2"]
+requires = ["setuptools>=80", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -82,10 +82,11 @@ napari_zen_streaming = [".env"]
 
 [tool.black]
 line-length = 79
-target-version = ['py311', 'py312', 'py313']
+target-version = ['py311']
 
 [tool.ruff]
 line-length = 79
+target-version = "py311"
 lint.select = [
     "E", "F", "W", #flake8
     "UP", # pyupgrade
@@ -104,8 +105,9 @@ lint.ignore = [
     "G004", # logging is using f-string
     "G201", # use .exception(...) instead of .error(...) in except block
     "E501", # line too long. let black handle this
-    "UP006", "UP007", # type annotation. As using magicgui require runtime type annotation then we disable this.
-    "SIM117", # flake8-simplify - some of merged with statements are not looking great with black, reanble after drop python 3.9
+    "ISC001", # Black may place implicitly concatenated strings on one line.
+    "UP006", "UP007", # Preserve runtime annotations consumed by Qt/magicgui.
+    "SIM117", # Keep nested context managers explicit where clearer.
 ]
 
 [tool.mypy]

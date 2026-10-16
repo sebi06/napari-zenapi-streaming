@@ -51,7 +51,10 @@ def test_target_is_armed_before_loaded_experiment_starts() -> None:
             experiment_id: str,
             output_name: str,
         ) -> None:
-            events.append(f"started:{experiment_id}:{output_name}:" f"{pipeline._target_experiment_id}")
+            events.append(
+                f"started:{experiment_id}:{output_name}:"
+                f"{pipeline._target_experiment_id}"
+            )
 
     pipeline.connection = Connection()
     pipeline.ensure_reader_ready = ensure_reader_ready
@@ -122,12 +125,16 @@ def test_stop_drains_queued_frames(monkeypatch) -> None:
     pipeline.queue.put_nowait("second")
 
     async def run() -> None:
-        pipeline.processor_task = asyncio.create_task(pipeline._process_frames())
+        pipeline.processor_task = asyncio.create_task(
+            pipeline._process_frames()
+        )
         try:
             await asyncio.wait_for(pipeline.stop(), timeout=0.5)
         finally:
             pipeline.processor_task.cancel()
-            await asyncio.gather(pipeline.processor_task, return_exceptions=True)
+            await asyncio.gather(
+                pipeline.processor_task, return_exceptions=True
+            )
 
     asyncio.run(run())
     assert processed == ["first", "second"]

@@ -7,7 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 from napari_zen_streaming import ZEN_stream2omezarr as streamer
-from napari_zen_streaming.ZEN_omezarr import load_experiment_config, parse_experiment_xml
+from napari_zen_streaming.ZEN_omezarr import (
+    load_experiment_config,
+    parse_experiment_xml,
+)
 
 
 def test_tile_regions_map_to_scenes_and_per_scene_tiles() -> None:
@@ -84,7 +87,14 @@ def test_asymmetric_eight_tile_scenes_expect_48_frames() -> None:
     assert metadata.scenes == 2
     assert metadata.tiles == 8
     assert metadata.z_planes == 3
-    assert metadata.time_points * metadata.channels * metadata.z_planes * metadata.tiles * metadata.scenes == 48
+    assert (
+        metadata.time_points
+        * metadata.channels
+        * metadata.z_planes
+        * metadata.tiles
+        * metadata.scenes
+        == 48
+    )
 
 
 def test_tile_regions_are_mapped_to_plate_wells() -> None:
@@ -139,7 +149,9 @@ def test_tile_regions_are_mapped_to_plate_wells() -> None:
     ]
 
 
-def test_configured_cli_exports_dimensions_before_streaming(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_configured_cli_exports_dimensions_before_streaming(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """An INI without dimensions still subscribes to every exported channel."""
     config_path = tmp_path / "experiment.ini"
     config_path.write_text(
@@ -169,21 +181,40 @@ def test_configured_cli_exports_dimensions_before_streaming(monkeypatch: pytest.
         scenes=2,
         positions=positions,
     )
-    monkeypatch.setattr(streamer, "initialize_zenapi", lambda path: (Channel(), object()))
-    monkeypatch.setattr(streamer, "ExperimentServiceStub", lambda **kwargs: object())
+    monkeypatch.setattr(
+        streamer, "initialize_zenapi", lambda path: (Channel(), object())
+    )
+    monkeypatch.setattr(
+        streamer, "ExperimentServiceStub", lambda **kwargs: object()
+    )
 
-    async def load_metadata(service: object, experiment_name: str) -> SimpleNamespace:
+    async def load_metadata(
+        service: object, experiment_name: str
+    ) -> SimpleNamespace:
         assert experiment_name == "Plate"
         return acquisition
 
-    async def write_output(ecfg: streamer.ExperimentConfig, inactivity_timeout: float) -> Path:
-        assert (ecfg.time_points, ecfg.channels, ecfg.z_planes, ecfg.tiles, ecfg.scenes) == (2, 3, 4, 2, 2)
+    async def write_output(
+        ecfg: streamer.ExperimentConfig, inactivity_timeout: float
+    ) -> Path:
+        assert (
+            ecfg.time_points,
+            ecfg.channels,
+            ecfg.z_planes,
+            ecfg.tiles,
+            ecfg.scenes,
+        ) == (2, 3, 4, 2, 2)
         assert ecfg.z_spacing == 0.5
         assert ecfg.positions == list(positions)
         assert closed == [True]
         return tmp_path / "output.ome.zarr"
 
     monkeypatch.setattr(streamer, "load_experiment_acquisition", load_metadata)
-    monkeypatch.setattr(streamer, "stream_to_omezarr_with_config", write_output)
+    monkeypatch.setattr(
+        streamer, "stream_to_omezarr_with_config", write_output
+    )
 
-    assert asyncio.run(streamer._run_configured_experiment(config, 30.0)) == tmp_path / "output.ome.zarr"
+    assert (
+        asyncio.run(streamer._run_configured_experiment(config, 30.0))
+        == tmp_path / "output.ome.zarr"
+    )
