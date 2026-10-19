@@ -3,21 +3,21 @@ name = "napari-zenapi-streaming"
 version = "0.0.1"
 description = "ZEN API streaming plugin for napari"
 readme = "README.md"
-requires-python = ">=3.11, <3.14"
+requires-python = ">=3.12, <3.15"
 license = "BSD-3-Clause"
 authors = [
     {name = "Krijn H. van der Steen", email = "k.h.vandersteen@umcutrecht.nl"},
     {name = "Sebastian Rhode", email = "sebastian.rhode@zeiss.com"}
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 2 - Beta",
     "Intended Audience :: Science/Research",
     "Framework :: napari",
     "Topic :: Scientific/Engineering :: Image Processing",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 
@@ -82,11 +82,11 @@ napari_zen_streaming = [".env"]
 
 [tool.black]
 line-length = 79
-target-version = ['py311']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 79
-target-version = "py311"
+target-version = "py312"
 lint.select = [
     "E", "F", "W", #flake8
     "UP", # pyupgrade
