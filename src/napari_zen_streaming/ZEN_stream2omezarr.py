@@ -148,7 +148,9 @@ def _runtime_grayscale_dtype(
         dtype = _GRAYSCALE_PIXEL_DTYPES[pixel_type]
     except KeyError as exc:
         name = getattr(pixel_type, "name", str(pixel_type))
-        raise ValueError(f"Unsupported streamed pixel type for OME-ZARR: {name}") from exc
+        raise ValueError(
+            f"Unsupported streamed pixel type for OME-ZARR: {name}"
+        ) from exc
 
     expected_size = width * height * dtype.itemsize
     if payload_size != expected_size:
@@ -227,7 +229,9 @@ def _build_position_layout(
             )
         return (
             [
-                Position(name=f"S{scene}_M{tile}", grid_row=scene, grid_column=tile)
+                Position(
+                    name=f"S{scene}_M{tile}", grid_row=scene, grid_column=tile
+                )
                 for scene in range(num_s)
                 for tile in range(num_m)
             ],
@@ -242,16 +246,32 @@ def _build_position_layout(
         row = metadata.get("well_row")
         column = metadata.get("well_column")
         field_index = metadata.get("field_index")
-        if not isinstance(row, int) or row < 1 or not isinstance(column, int) or column < 1:
-            logger.warning("ZEN scene-to-well metadata is invalid; using a generic " "multiposition OME-ZARR layout.")
+        if (
+            not isinstance(row, int)
+            or row < 1
+            or not isinstance(column, int)
+            or column < 1
+        ):
+            logger.warning(
+                "ZEN scene-to-well metadata is invalid; using a generic "
+                "multiposition OME-ZARR layout."
+            )
             return (
-                [Position(name=f"S{s}_M{m}", grid_row=s, grid_column=m) for s in range(num_s) for m in range(num_m)],
+                [
+                    Position(name=f"S{s}_M{m}", grid_row=s, grid_column=m)
+                    for s in range(num_s)
+                    for m in range(num_m)
+                ],
                 None,
             )
 
         max_row = max(max_row, row)
         max_column = max(max_column, column)
-        field = field_index - 1 if isinstance(field_index, int) and field_index > 0 else scene
+        field = (
+            field_index - 1
+            if isinstance(field_index, int) and field_index > 0
+            else scene
+        )
         hcs_positions.append(
             Position(
                 name=str(field),
@@ -265,7 +285,9 @@ def _build_position_layout(
         Plate(
             name=ecfg.experiment_name,
             row_names=[_plate_row_name(row) for row in range(1, max_row + 1)],
-            column_names=[f"{column:02d}" for column in range(1, max_column + 1)],
+            column_names=[
+                f"{column:02d}" for column in range(1, max_column + 1)
+            ],
         ),
     )
 
@@ -274,12 +296,20 @@ def _materialize_hcs_row_groups(zarr_path: Path) -> None:
     """Create explicit Zarr v3 groups for rows referenced by plate wells."""
     root = zarr.open_group(zarr_path, mode="a")
     ome_metadata = root.attrs.get("ome", {})
-    plate_metadata = ome_metadata.get("plate", {}) if isinstance(ome_metadata, dict) else {}
-    wells = plate_metadata.get("wells", []) if isinstance(plate_metadata, dict) else []
+    plate_metadata = (
+        ome_metadata.get("plate", {}) if isinstance(ome_metadata, dict) else {}
+    )
+    wells = (
+        plate_metadata.get("wells", [])
+        if isinstance(plate_metadata, dict)
+        else []
+    )
     row_names = {
         well["path"].split("/", maxsplit=1)[0]
         for well in wells
-        if isinstance(well, dict) and isinstance(well.get("path"), str) and "/" in well["path"]
+        if isinstance(well, dict)
+        and isinstance(well.get("path"), str)
+        and "/" in well["path"]
     }
     for row_name in row_names:
         root.require_group(row_name)
@@ -302,7 +332,11 @@ def _get_multiscale_metadata(
 
     transformations = datasets[0].get("coordinateTransformations", [])
     scale = next(
-        (transformation.get("scale") for transformation in transformations if transformation.get("type") == "scale"),
+        (
+            transformation.get("scale")
+            for transformation in transformations
+            if transformation.get("type") == "scale"
+        ),
         None,
     )
     if not isinstance(scale, list) or len(scale) != len(axes):
@@ -352,7 +386,8 @@ def _assemble_scene_plane(
         )
         if image.shape != expected_shape:
             raise ValueError(
-                f"Tile {placed_tile.tile.tile_index} shape " f"{image.shape} differs from {expected_shape}"
+                f"Tile {placed_tile.tile.tile_index} shape "
+                f"{image.shape} differs from {expected_shape}"
             )
         y_slice = slice(
             placed_tile.y_offset,
@@ -389,7 +424,9 @@ def _assemble_scene_mosaics(
             provided, assemble and advertise mosaics inside HCS wells.
     """
     if not tile_geometries:
-        logger.warning("No tile positions were captured; scene assembly skipped.")
+        logger.warning(
+            "No tile positions were captured; scene assembly skipped."
+        )
         return
 
     root = zarr.open_group(zarr_path, mode="a")
@@ -431,23 +468,36 @@ def _assemble_scene_mosaics(
         if hcs_mode:
             position = metadata_by_scene.get(scene_index)
             if position is None:
-                raise ValueError(f"HCS metadata missing for scene {scene_index}")
+                raise ValueError(
+                    f"HCS metadata missing for scene {scene_index}"
+                )
             row = position.get("well_row")
             column = position.get("well_column")
             field_index = position.get("field_index")
             if not isinstance(row, int) or not isinstance(column, int):
                 raise ValueError("HCS scene has no valid well coordinate")
-            field = field_index - 1 if isinstance(field_index, int) and field_index > 0 else scene_index
+            field = (
+                field_index - 1
+                if isinstance(field_index, int) and field_index > 0
+                else scene_index
+            )
             well_path = f"{_plate_row_name(row)}/{column:02d}"
-            source_names = [str(field * num_m + placed.tile.tile_index) for placed in geometry.tiles]
-            source_paths = [f"{well_path}/{source_name}" for source_name in source_names]
+            source_names = [
+                str(field * num_m + placed.tile.tile_index)
+                for placed in geometry.tiles
+            ]
+            source_paths = [
+                f"{well_path}/{source_name}" for source_name in source_names
+            ]
             scene_name = f"scene_{scene_index}"
             scene_path = f"{well_path}/{scene_name}"
         else:
             for placed_tile in geometry.tiles:
                 position_index = placed_tile.tile.position_index
                 if position_index >= len(raw_series):
-                    raise ValueError("Tile position index exceeds the OME series metadata")
+                    raise ValueError(
+                        "Tile position index exceeds the OME series metadata"
+                    )
                 source_paths.append(raw_series[position_index])
             source_names = []
             well_path = ""
@@ -479,14 +529,21 @@ def _assemble_scene_mosaics(
             z_scale = scale[z_axis]
             if z_scale <= 0:
                 raise ValueError("Scene Z scale must be positive")
-            z_origin = min(placed_tile.tile.position_z for placed_tile in geometry.tiles)
+            z_origin = min(
+                placed_tile.tile.position_z for placed_tile in geometry.tiles
+            )
             z_offsets = [
-                int(round((placed_tile.tile.position_z - z_origin) / z_scale)) for placed_tile in geometry.tiles
+                int(round((placed_tile.tile.position_z - z_origin) / z_scale))
+                for placed_tile in geometry.tiles
             ]
-            mosaic_shape_values[z_axis] = max(z_offset + source_shape[z_axis] for z_offset in z_offsets)
+            mosaic_shape_values[z_axis] = max(
+                z_offset + source_shape[z_axis] for z_offset in z_offsets
+            )
         else:
             z_axis = None
-            z_origin = min(placed_tile.tile.position_z for placed_tile in geometry.tiles)
+            z_origin = min(
+                placed_tile.tile.position_z for placed_tile in geometry.tiles
+            )
         mosaic_shape = tuple(mosaic_shape_values)
         if reuse_source_group:
             scene_group = source_group
@@ -534,9 +591,13 @@ def _assemble_scene_mosaics(
                         placed_tile.x_offset,
                         placed_tile.x_offset + placed_tile.tile.width,
                     )
-                    tile_plane = source_array[tuple(source_plane_index) + (slice(None), slice(None))]
+                    tile_plane = source_array[
+                        tuple(source_plane_index) + (slice(None), slice(None))
+                    ]
                     mosaic_plane[y_slice, x_slice] = tile_plane
-                mosaic_array[plane_index + (slice(None), slice(None))] = mosaic_plane
+                mosaic_array[plane_index + (slice(None), slice(None))] = (
+                    mosaic_plane
+                )
 
         translation = [0.0] * len(axes)
         if z_axis is not None:
@@ -597,24 +658,29 @@ def _assemble_scene_mosaics(
             well_metadata = dict(well_ome.get("well", {}))
             images = well_metadata.get("images", [])
             source_name_set = set(source_names)
-            well_metadata["images"] = [image for image in images if image.get("path") not in source_name_set] + [
-                {"path": scene_name}
-            ]
+            well_metadata["images"] = [
+                image
+                for image in images
+                if image.get("path") not in source_name_set
+            ] + [{"path": scene_name}]
             well_ome["well"] = well_metadata
             well_group.attrs["ome"] = well_ome
         else:
             scene_paths.append(scene_path)
         if reuse_source_group:
             logger.info(
-                f"Finalized scene {scene_index} from 1 spatial tile " f"without pixel copy: shape={mosaic_shape}"
+                f"Finalized scene {scene_index} from 1 spatial tile "
+                f"without pixel copy: shape={mosaic_shape}"
             )
         elif single_tile:
             logger.info(
-                f"Copied scene {scene_index} from 1 spatial tile to preserve " f"the source group: shape={mosaic_shape}"
+                f"Copied scene {scene_index} from 1 spatial tile to preserve "
+                f"the source group: shape={mosaic_shape}"
             )
         else:
             logger.info(
-                f"Assembled scene {scene_index} from {len(scene_tiles)} " f"spatial tiles: shape={mosaic_shape}"
+                f"Assembled scene {scene_index} from {len(scene_tiles)} "
+                f"spatial tiles: shape={mosaic_shape}"
             )
 
     if not hcs_mode:
@@ -626,7 +692,10 @@ def _assemble_scene_mosaics(
             if source_path in root:
                 del root[source_path]
         if assembled_source_paths:
-            logger.info(f"Removed {len(assembled_source_paths)} source tile groups " "after scene assembly.")
+            logger.info(
+                f"Removed {len(assembled_source_paths)} source tile groups "
+                "after scene assembly."
+            )
     for source_path, final_path in scene_moves:
         if final_path in root:
             del root[final_path]
@@ -640,7 +709,9 @@ def _find_omezarr_image_paths(zarr_path: Path) -> list[Path]:
 
     def visit(group: zarr.Group, group_path: Path) -> None:
         ome_metadata = group.attrs.get("ome", {})
-        if isinstance(ome_metadata, dict) and isinstance(ome_metadata.get("multiscales"), list):
+        if isinstance(ome_metadata, dict) and isinstance(
+            ome_metadata.get("multiscales"), list
+        ):
             image_paths.append(group_path)
             return
         for name, subgroup in group.groups():
@@ -675,14 +746,19 @@ def generate_omezarr_pyramids(
         else None
     )
 
-    logger.info(f"Generating {pyramid_levels} pyramid level(s) for " f"{len(image_paths)} image(s) ...")
+    logger.info(
+        f"Generating {pyramid_levels} pyramid level(s) for "
+        f"{len(image_paths)} image(s) ..."
+    )
     for image_index, image_path in enumerate(image_paths, start=1):
         existing = nz.from_ngff_zarr(image_path, validate=True)
         base_image = existing.images[0]
         if not {"y", "x"}.issubset(base_image.dims):
             raise RuntimeError(f"OME-Zarr image has no Y/X axes: {image_path}")
 
-        spatial_dims = [dim for dim in base_image.dims if dim in {"z", "y", "x"}]
+        spatial_dims = [
+            dim for dim in base_image.dims if dim in {"z", "y", "x"}
+        ]
         scale_factors = [
             {dim: 2**level if dim in {"y", "x"} else 1 for dim in spatial_dims}
             for level in range(1, pyramid_levels + 1)
@@ -706,7 +782,10 @@ def generate_omezarr_pyramids(
             start_level=1,
             chunks_per_shard=chunks_per_shard,
         )
-        logger.info(f"Pyramid image {image_index}/{len(image_paths)} complete: " f"{image_path}")
+        logger.info(
+            f"Pyramid image {image_index}/{len(image_paths)} complete: "
+            f"{image_path}"
+        )
 
     logger.info(f"OME-Zarr pyramid generation completed: {zarr_path}")
 
@@ -715,7 +794,10 @@ async def _merge_channel_streams(
     streams: list[tuple[int, AsyncIterable[Any]]],
 ) -> AsyncIterator[tuple[int, Any]]:
     """Merge explicit channel subscriptions into one asynchronous stream."""
-    iterators = [(output_channel, stream.__aiter__()) for output_channel, stream in streams]
+    iterators = [
+        (output_channel, stream.__aiter__())
+        for output_channel, stream in streams
+    ]
     tasks = {
         asyncio.create_task(stream_iter.__anext__()): (
             output_channel,
@@ -725,7 +807,9 @@ async def _merge_channel_streams(
     }
     try:
         while tasks:
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
             for task in done:
                 output_channel, stream_iter = tasks.pop(task)
                 try:
@@ -875,7 +959,9 @@ async def _stream_to_omezarr_connected(
     zarr_path = output_dir / zarr_name
     logger.info(f"OME-ZARR output path: {zarr_path}")
 
-    streaming_service = ExperimentStreamingServiceStub(channel=channel, metadata=metadata)
+    streaming_service = ExperimentStreamingServiceStub(
+        channel=channel, metadata=metadata
+    )
 
     # ----- open the pixel stream FIRST (before starting the experiment) -----
     # Opening before triggering the experiment ensures no early frames are
@@ -946,9 +1032,14 @@ async def _stream_to_omezarr_connected(
     resources.push_async_callback(_close_async_iterator, async_iter)
     while True:
         try:
-            response = await asyncio.wait_for(async_iter.__anext__(), timeout=inactivity_timeout)
+            response = await asyncio.wait_for(
+                async_iter.__anext__(), timeout=inactivity_timeout
+            )
         except TimeoutError:
-            logger.info(f"No frames for {inactivity_timeout:.0f}s" " - assuming experiment finished.")
+            logger.info(
+                f"No frames for {inactivity_timeout:.0f}s"
+                " - assuming experiment finished."
+            )
             break
         except StopAsyncIteration:
             break
@@ -981,7 +1072,8 @@ async def _stream_to_omezarr_connected(
             )
         elif np.dtype(dtype) != frame_dtype:
             raise ValueError(
-                "Configured dtype does not match the streamed pixel type: " f"{np.dtype(dtype)} != {frame_dtype}."
+                "Configured dtype does not match the streamed pixel type: "
+                f"{np.dtype(dtype)} != {frame_dtype}."
             )
         # ZEN API reports scaling in metres; convert to µm for OME metadata.
         sx = fd.scaling.x * 1e6  # m -> µm
@@ -1005,7 +1097,8 @@ async def _stream_to_omezarr_connected(
             frame_width,
         ):
             raise ValueError(
-                "Streamed frame shape changed during acquisition: " f"{(frame_height, frame_width)} to {frame.shape}."
+                "Streamed frame shape changed during acquisition: "
+                f"{(frame_height, frame_width)} to {frame.shape}."
             )
 
         # Accumulate frames and coordinates for the second-pass write.
@@ -1062,7 +1155,9 @@ async def _stream_to_omezarr_connected(
     dimensions: list[Dimension] = []
 
     if num_t > 1:
-        dimensions.append(Dimension(name="t", count=num_t, chunk_size=1, type="time"))
+        dimensions.append(
+            Dimension(name="t", count=num_t, chunk_size=1, type="time")
+        )
 
     # Flatten scene × tile into a named position list.  ome-writers uses
     # the grid_row / grid_column values to build a multi-position mosaic.
@@ -1078,7 +1173,9 @@ async def _stream_to_omezarr_connected(
         dimensions.append(Dimension(name="p", type="position", coords=pos_coords))  # type: ignore[arg-type]
 
     if num_c > 1:
-        dimensions.append(Dimension(name="c", count=num_c, chunk_size=1, type="channel"))
+        dimensions.append(
+            Dimension(name="c", count=num_c, chunk_size=1, type="channel")
+        )
 
     if num_z > 1:
         # Derive Z spacing from the physical stage-Z positions recorded
@@ -1180,7 +1277,9 @@ async def _stream_to_omezarr_connected(
             range(num_c),
             range(num_z),
         )
-        for t_idx, s_idx, m_idx, c_idx, z_idx in napari_progress(coords, total=total_expected, desc="Writing frames"):
+        for t_idx, s_idx, m_idx, c_idx, z_idx in napari_progress(
+            coords, total=total_expected, desc="Writing frames"
+        ):
             key = (t_idx, s_idx, m_idx, c_idx, z_idx)
             if key in coord_to_idx:
                 fidx = coord_to_idx[key]
@@ -1193,7 +1292,10 @@ async def _stream_to_omezarr_connected(
                 # channel_index).  Emit a placeholder so the ZARR shape
                 # remains rectangular.
                 stream.skip(frames=1)
-                logger.warning(f"Missing frame at " f"T={t_idx} S={s_idx} M={m_idx} C={c_idx} Z={z_idx}")
+                logger.warning(
+                    f"Missing frame at "
+                    f"T={t_idx} S={s_idx} M={m_idx} C={c_idx} Z={z_idx}"
+                )
 
     logger.info(f"OME-ZARR written successfully: {zarr_path}")
     return zarr_path
@@ -1280,16 +1382,26 @@ async def _stream_to_omezarr_with_config_connected(
     num_z = ecfg.z_planes
     num_m = ecfg.tiles
     num_s = ecfg.scenes
-    experiment_service = ExperimentServiceStub(channel=channel, metadata=metadata)
-    streaming_service = ExperimentStreamingServiceStub(channel=channel, metadata=metadata)
+    experiment_service = ExperimentServiceStub(
+        channel=channel, metadata=metadata
+    )
+    streaming_service = ExperimentStreamingServiceStub(
+        channel=channel, metadata=metadata
+    )
 
     # ----- open the pixel stream FIRST (before starting the experiment) -----
     # This ensures no early frames are missed. We use
     # monitor_all_experiments because the experiment_id does not exist yet.
-    source_channels = [ecfg.channel_index] if ecfg.channel_index is not None else list(range(max(1, num_c)))
+    source_channels = (
+        [ecfg.channel_index]
+        if ecfg.channel_index is not None
+        else list(range(max(1, num_c)))
+    )
     streams: list[tuple[int, AsyncIterable[Any]]]
     if ecfg.start_from_script:
-        streams = await _open_channel_streams(channel, metadata, source_channels, resources)
+        streams = await _open_channel_streams(
+            channel, metadata, source_channels, resources
+        )
     else:
         streams = [
             (
@@ -1315,7 +1427,9 @@ async def _stream_to_omezarr_with_config_connected(
 
     target_experiment_id: str | None = None
     if ecfg.start_from_script:
-        logger.info(f"Starting experiment '{ecfg.experiment_name}' via ZEN-API ...")
+        logger.info(
+            f"Starting experiment '{ecfg.experiment_name}' via ZEN-API ..."
+        )
         exp_id, czi_path = await start_experiment(
             exp_name=ecfg.experiment_name,
             czi_name=ecfg.czi_name,
@@ -1328,7 +1442,9 @@ async def _stream_to_omezarr_with_config_connected(
         if on_experiment_started is not None:
             on_experiment_started(exp_id)
         await asyncio.wait_for(
-            asyncio.gather(*(stream.recv_initial_metadata() for _, stream in streams)),
+            asyncio.gather(
+                *(stream.recv_initial_metadata() for _, stream in streams)
+            ),
             timeout=inactivity_timeout,
         )
     else:
@@ -1397,7 +1513,9 @@ async def _stream_to_omezarr_with_config_connected(
         else:
             from tqdm import tqdm
 
-            _tqdm_bar = tqdm(total=total, desc="Streaming frames", unit="frame")
+            _tqdm_bar = tqdm(
+                total=total, desc="Streaming frames", unit="frame"
+            )
 
     def _progress_update(written: int) -> None:
         """Advance the bar after each frame is written."""
@@ -1431,7 +1549,9 @@ async def _stream_to_omezarr_with_config_connected(
         assert dtype is not None
         dimensions: list[Dimension] = []
         if num_t > 1:
-            dimensions.append(Dimension(name="t", count=num_t, chunk_size=1, type="time"))
+            dimensions.append(
+                Dimension(name="t", count=num_t, chunk_size=1, type="time")
+            )
         if len(pos_coords) > 1 or output_plate is not None:
             dimensions.append(
                 Dimension(
@@ -1441,7 +1561,9 @@ async def _stream_to_omezarr_with_config_connected(
                 )
             )
         if num_c > 1:
-            dimensions.append(Dimension(name="c", count=num_c, chunk_size=1, type="channel"))
+            dimensions.append(
+                Dimension(name="c", count=num_c, chunk_size=1, type="channel")
+            )
         if num_z > 1:
             dimensions.append(
                 Dimension(
@@ -1506,9 +1628,13 @@ async def _stream_to_omezarr_with_config_connected(
     resources.push_async_callback(_close_async_iterator, async_iter)
     while True:
         try:
-            stream_c, response = await asyncio.wait_for(async_iter.__anext__(), timeout=inactivity_timeout)
+            stream_c, response = await asyncio.wait_for(
+                async_iter.__anext__(), timeout=inactivity_timeout
+            )
         except TimeoutError:
-            logger.info(f"No frames for {inactivity_timeout:.0f}s - assuming experiment finished.")
+            logger.info(
+                f"No frames for {inactivity_timeout:.0f}s - assuming experiment finished."
+            )
             break
         except StopAsyncIteration:
             break
@@ -1519,9 +1645,13 @@ async def _stream_to_omezarr_with_config_connected(
             raise ValueError("Streamed frame has no experiment ID")
         if target_experiment_id is None:
             target_experiment_id = frame_experiment_id
-            logger.info("Pixel stream pinned to experiment %s", target_experiment_id)
+            logger.info(
+                "Pixel stream pinned to experiment %s", target_experiment_id
+            )
         if frame_experiment_id != target_experiment_id:
-            logger.debug("Ignoring frame from experiment %s", frame_experiment_id)
+            logger.debug(
+                "Ignoring frame from experiment %s", frame_experiment_id
+            )
             continue
         fp = fd.frame_position
 
@@ -1545,12 +1675,16 @@ async def _stream_to_omezarr_with_config_connected(
             )
             if dtype != configured_dtype:
                 logger.warning(
-                    "Configured dtype %s differs from runtime dtype %s; " "using the runtime value.",
+                    "Configured dtype %s differs from runtime dtype %s; "
+                    "using the runtime value.",
                     configured_dtype,
                     dtype,
                 )
         elif frame_dtype != dtype:
-            raise ValueError("Streamed pixel type changed during acquisition: " f"{dtype} to {frame_dtype}.")
+            raise ValueError(
+                "Streamed pixel type changed during acquisition: "
+                f"{dtype} to {frame_dtype}."
+            )
 
         # ZEN API reports scale in metres; convert to µm for OME metadata.
         sx = fd.scaling.x * 1e6
@@ -1558,7 +1692,11 @@ async def _stream_to_omezarr_with_config_connected(
         # Stage positions in metres → µm. Scene assembly requires real stage
         # coordinates; substituting zero would silently overlap tiles.
         stage_position = fd.frame_stage_position
-        if stage_position.x is None or stage_position.y is None or stage_position.z is None:
+        if (
+            stage_position.x is None
+            or stage_position.y is None
+            or stage_position.z is None
+        ):
             raise ValueError("Streaming frame has no complete stage position")
         stage_x = stage_position.x * 1e6
         stage_y = stage_position.y * 1e6
@@ -1574,7 +1712,8 @@ async def _stream_to_omezarr_with_config_connected(
             expected_frame_shape = frame.shape
         elif frame.shape != expected_frame_shape:
             raise ValueError(
-                "Streamed frame shape changed during acquisition: " f"{expected_frame_shape} to {frame.shape}."
+                "Streamed frame shape changed during acquisition: "
+                f"{expected_frame_shape} to {frame.shape}."
             )
 
         frame_meta = {
@@ -1588,7 +1727,9 @@ async def _stream_to_omezarr_with_config_connected(
         # (H × W) and physical scale (µm/px) from the frame data itself.
         if not layout_initialized:
             try:
-                status_response = await experiment_service.get_status(ExperimentServiceGetStatusRequest())
+                status_response = await experiment_service.get_status(
+                    ExperimentServiceGetStatusRequest()
+                )
                 status = status_response.status
                 if status.time_points_count > 0:
                     num_t = status.time_points_count
@@ -1664,13 +1805,21 @@ async def _stream_to_omezarr_with_config_connected(
             if plate is not None:
                 logger.info(
                     "OME-ZARR HCS layout enabled for wells: %s",
-                    ", ".join(dict.fromkeys(f"{position.plate_row}{position.plate_column}" for position in pos_coords)),
+                    ", ".join(
+                        dict.fromkeys(
+                            f"{position.plate_row}{position.plate_column}"
+                            for position in pos_coords
+                        )
+                    ),
                 )
             total_expected = len(coord_to_linear)
             _progress_init(total_expected)
             layout_initialized = True
             if direct_hcs:
-                logger.info("HCS direct mosaic mode: waiting for " f"{num_s * num_m} tile geometries.")
+                logger.info(
+                    "HCS direct mosaic mode: waiting for "
+                    f"{num_s * num_m} tile geometries."
+                )
             else:
                 zarr_stream, settings = _open_output_stream(
                     frame_height,
@@ -1725,12 +1874,19 @@ async def _stream_to_omezarr_with_config_connected(
             if zarr_stream is None and len(tile_geometries) == num_s * num_m:
                 scene_geometries = {
                     scene_index: calculate_scene_geometry(
-                        [tile_geometries[(scene_index, tile_index)] for tile_index in range(num_m)]
+                        [
+                            tile_geometries[(scene_index, tile_index)]
+                            for tile_index in range(num_m)
+                        ]
                     )
                     for scene_index in range(num_s)
                 }
-                output_height = max(geometry.height for geometry in scene_geometries.values())
-                output_width = max(geometry.width for geometry in scene_geometries.values())
+                output_height = max(
+                    geometry.height for geometry in scene_geometries.values()
+                )
+                output_width = max(
+                    geometry.width for geometry in scene_geometries.values()
+                )
                 zarr_stream, settings = _open_output_stream(
                     output_height,
                     output_width,
@@ -1739,16 +1895,24 @@ async def _stream_to_omezarr_with_config_connected(
                     pos_coords,
                     plate,
                 )
-                logger.info(f"HCS scene mosaic canvas: Y={output_height} " f"X={output_width}")
+                logger.info(
+                    f"HCS scene mosaic canvas: Y={output_height} "
+                    f"X={output_width}"
+                )
 
             if zarr_stream is not None:
-                for buffered_key, tile_records in list(hcs_plane_tiles.items()):
+                for buffered_key, tile_records in list(
+                    hcs_plane_tiles.items()
+                ):
                     if len(tile_records) < num_m:
                         continue
                     _, scene_index, _, _ = buffered_key
                     geometry = scene_geometries[scene_index]
                     mosaic = _assemble_scene_plane(
-                        {tile_index: record[0] for tile_index, record in tile_records.items()},
+                        {
+                            tile_index: record[0]
+                            for tile_index, record in tile_records.items()
+                        },
                         geometry,
                         output_height,
                         output_width,
@@ -1778,7 +1942,9 @@ async def _stream_to_omezarr_with_config_connected(
 
         buffered_frames = len(pending)
         if direct_hcs:
-            buffered_frames += sum(len(tile_records) for tile_records in hcs_plane_tiles.values())
+            buffered_frames += sum(
+                len(tile_records) for tile_records in hcs_plane_tiles.values()
+            )
         if buffered_frames > ecfg.max_pending_frames:
             raise BufferError(
                 "Out-of-order pixel buffer exceeded "
@@ -1800,11 +1966,17 @@ async def _stream_to_omezarr_with_config_connected(
     if zarr_stream is None:
         _progress_close()
         if direct_hcs:
-            missing_geometry = sorted(set(itertools.product(range(num_s), range(num_m))) - set(tile_geometries))
-            raise RuntimeError(
-                "Cannot create direct HCS output because tile geometry " f"was not received for {missing_geometry}."
+            missing_geometry = sorted(
+                set(itertools.product(range(num_s), range(num_m)))
+                - set(tile_geometries)
             )
-        raise RuntimeError("No pixel frames were received; no OME-ZARR was created.")
+            raise RuntimeError(
+                "Cannot create direct HCS output because tile geometry "
+                f"was not received for {missing_geometry}."
+            )
+        raise RuntimeError(
+            "No pixel frames were received; no OME-ZARR was created."
+        )
 
     # After the receive loop exits, drain any frames still sitting in
     # `pending` and fill gaps (frames that never arrived) with skip()
@@ -1819,7 +1991,10 @@ async def _stream_to_omezarr_with_config_connected(
                 _, scene_index, _, _ = buffered_key
                 geometry = scene_geometries[scene_index]
                 mosaic = _assemble_scene_plane(
-                    {tile_index: record[0] for tile_index, record in tile_records.items()},
+                    {
+                        tile_index: record[0]
+                        for tile_index, record in tile_records.items()
+                    },
                     geometry,
                     output_height,
                     output_width,
@@ -1841,7 +2016,10 @@ async def _stream_to_omezarr_with_config_connected(
                 zarr_stream.append(frm, frame_metadata=fmeta)
             else:
                 zarr_stream.skip(frames=1)
-                logger.warning(f"Missing frame at linear index" f" {next_write} – skipped.")
+                logger.warning(
+                    f"Missing frame at linear index"
+                    f" {next_write} – skipped."
+                )
             next_write += 1
 
         # Finalize the writer before rewriting HCS metadata or moving groups.
@@ -1855,7 +2033,11 @@ async def _stream_to_omezarr_with_config_connected(
                 keep_source_tiles=ecfg.keep_source_tiles,
             )
 
-    missing_coordinates = [coordinate for coordinate, index in coord_to_linear.items() if index not in received_indices]
+    missing_coordinates = [
+        coordinate
+        for coordinate, index in coord_to_linear.items()
+        if index not in received_indices
+    ]
     acquisition_complete = not missing_coordinates
     status = {
         "complete": acquisition_complete,
@@ -1865,12 +2047,18 @@ async def _stream_to_omezarr_with_config_connected(
         "coordinate_axes": ["t", "s", "m", "c", "z"],
         "missing_coordinates": missing_coordinates,
     }
-    (zarr_path / "acquisition_status.json").write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+    (zarr_path / "acquisition_status.json").write_text(
+        json.dumps(status, indent=2) + "\n", encoding="utf-8"
+    )
     _progress_close()
     if not acquisition_complete:
-        raise IncompleteAcquisitionError(zarr_path, frame_count, len(coord_to_linear))
+        raise IncompleteAcquisitionError(
+            zarr_path, frame_count, len(coord_to_linear)
+        )
     logger.info("OME-ZARR written successfully: %s", zarr_path)
-    logger.info("Frames received: %s / %s expected", frame_count, total_expected)
+    logger.info(
+        "Frames received: %s / %s expected", frame_count, total_expected
+    )
     return zarr_path
 
 
@@ -1966,7 +2154,10 @@ def parse_args() -> argparse.Namespace:
         "--spatial-shard-size-chunks",
         type=int,
         default=None,
-        help=("Number of chunks per Y/X shard; 0 disables sharding. " "In config mode this overrides the INI value."),
+        help=(
+            "Number of chunks per Y/X shard; 0 disables sharding. "
+            "In config mode this overrides the INI value."
+        ),
     )
     parser.add_argument(
         "--inactivity-timeout",
@@ -1990,12 +2181,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def _run_configured_experiment(ecfg: ExperimentConfig, inactivity_timeout: float) -> Path:
+async def _run_configured_experiment(
+    ecfg: ExperimentConfig, inactivity_timeout: float
+) -> Path:
     """Export experiment metadata before opening the configured pixel streams."""
     channel, metadata = initialize_zenapi(ecfg.zenapi_config)
     try:
         service = ExperimentServiceStub(channel=channel, metadata=metadata)
-        acquisition = await load_experiment_acquisition(service, ecfg.experiment_name)
+        acquisition = await load_experiment_acquisition(
+            service, ecfg.experiment_name
+        )
     finally:
         channel.close()
 
@@ -2006,7 +2201,9 @@ async def _run_configured_experiment(ecfg: ExperimentConfig, inactivity_timeout:
     ecfg.tiles = acquisition.tiles
     ecfg.scenes = acquisition.scenes
     ecfg.positions = list(acquisition.positions)
-    return await stream_to_omezarr_with_config(ecfg, inactivity_timeout=inactivity_timeout)
+    return await stream_to_omezarr_with_config(
+        ecfg, inactivity_timeout=inactivity_timeout
+    )
 
 
 def main() -> None:
@@ -2027,8 +2224,12 @@ def main() -> None:
             ecfg.pyramid_levels = args.pyramid_levels
         if args.spatial_shard_size_chunks is not None:
             if args.spatial_shard_size_chunks < 0:
-                raise ValueError("--spatial-shard-size-chunks must be non-negative")
-            ecfg.spatial_shard_size_chunks = args.spatial_shard_size_chunks or None
+                raise ValueError(
+                    "--spatial-shard-size-chunks must be non-negative"
+                )
+            ecfg.spatial_shard_size_chunks = (
+                args.spatial_shard_size_chunks or None
+            )
         logger.info(f"Loaded experiment config: {args.experiment_config}")
         zarr_path = asyncio.run(
             _run_configured_experiment(
@@ -2039,12 +2240,18 @@ def main() -> None:
     else:
         # ---------- CLI mode (unknown dimensions, buffered write) ----------
         if not args.experiment:
-            logger.error("Either --experiment-config or --experiment must be provided.")
+            logger.error(
+                "Either --experiment-config or --experiment must be provided."
+            )
             sys.exit(1)
 
         compression = args.compression if args.compression != "none" else None
 
-        shard_size = 2 if args.spatial_shard_size_chunks is None else args.spatial_shard_size_chunks or None
+        shard_size = (
+            2
+            if args.spatial_shard_size_chunks is None
+            else args.spatial_shard_size_chunks or None
+        )
         zarr_path = asyncio.run(
             stream_to_omezarr(
                 zenapi_config=args.zenapi_config,

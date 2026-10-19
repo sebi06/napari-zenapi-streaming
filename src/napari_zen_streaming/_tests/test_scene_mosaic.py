@@ -112,12 +112,16 @@ def test_channel_subscriptions_can_start_before_server_headers() -> None:
             metadata,
         ):
             assert metadata == {"authorization": "test"}
-            return Stream(len([event for event in events if event[0] == "sent"]))
+            return Stream(
+                len([event for event in events if event[0] == "sent"])
+            )
 
     async def run():
         async with contextlib.AsyncExitStack() as resources:
             streams = await asyncio.wait_for(
-                _open_channel_streams(Channel(), {"authorization": "test"}, [0, 1], resources),
+                _open_channel_streams(
+                    Channel(), {"authorization": "test"}, [0, 1], resources
+                ),
                 timeout=1.0,
             )
             assert [index for index, _stream in streams] == [0, 1]
@@ -210,7 +214,9 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
             )
         )
 
-    unrelated_response = SimpleNamespace(frame_data=SimpleNamespace(experiment_id="unrelated-experiment"))
+    unrelated_response = SimpleNamespace(
+        frame_data=SimpleNamespace(experiment_id="unrelated-experiment")
+    )
     frames.insert(0 if start_from_script else 1, unrelated_response)
 
     class _Channel:
@@ -306,7 +312,9 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         startup_events.append("started")
         return "experiment-1", "image.czi"
 
-    monkeypatch.setattr(stream_module, "_open_channel_streams", open_channel_streams)
+    monkeypatch.setattr(
+        stream_module, "_open_channel_streams", open_channel_streams
+    )
     monkeypatch.setattr(stream_module, "start_experiment", start_experiment)
     monkeypatch.setattr(stream_module, "create_stream", _create_stream)
     monkeypatch.setattr(
@@ -317,7 +325,9 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     monkeypatch.setattr(
         stream_module,
         "_assemble_scene_mosaics",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("post-write assembly must not run")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("post-write assembly must not run")
+        ),
     )
     pyramid_calls = []
 
@@ -350,7 +360,9 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     progress = []
     acquisition = stream_module.stream_to_omezarr_with_config(
         config,
-        progress_callback=lambda current, total: progress.append((current, total)),
+        progress_callback=lambda current, total: progress.append(
+            (current, total)
+        ),
         on_experiment_started=started_ids.append,
     )
     if incomplete:
@@ -366,20 +378,26 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     assert status["complete"] is not incomplete
     assert status["experiment_id"] == "experiment-1"
     assert status["received_frames"] == 2
-    assert status["missing_coordinates"] == ([[1, 0, 0, 0, 0], [1, 0, 1, 0, 0]] if incomplete else [])
+    assert status["missing_coordinates"] == (
+        [[1, 0, 0, 0, 0], [1, 0, 1, 0, 0]] if incomplete else []
+    )
     assert progress[-1] == (-3 if incomplete else -2, 0)
     assert (-2, 0) not in progress if incomplete else (-2, 0) in progress
 
     assert len(output_streams) == 1
     output_stream = output_streams[0]
-    assert output_stream.settings.shape == ((2, 1, 2, 4) if incomplete else (1, 2, 4))
+    assert output_stream.settings.shape == (
+        (2, 1, 2, 4) if incomplete else (1, 2, 4)
+    )
     assert len(output_stream.appended) == 1
     mosaic, metadata = output_stream.appended[0]
     assert mosaic.tolist() == [[2, 2, 4, 4], [2, 2, 4, 4]]
     assert metadata["position_x"] == 0.0
     assert metadata["position_y"] == 0.0
     assert output_stream.skipped == int(incomplete)
-    assert startup_events == (["sent", "started", "ready"] if start_from_script else [])
+    assert startup_events == (
+        ["sent", "started", "ready"] if start_from_script else []
+    )
     assert started_ids == (["experiment-1"] if start_from_script else [])
     assert pyramid_calls == (
         []
@@ -405,7 +423,9 @@ def test_find_omezarr_image_paths_discovers_hcs_positions(
     image = well.create_group("0")
     image.attrs["ome"] = {"multiscales": []}
 
-    assert stream_module._find_omezarr_image_paths(zarr_path) == [zarr_path / "A" / "1" / "0"]
+    assert stream_module._find_omezarr_image_paths(zarr_path) == [
+        zarr_path / "A" / "1" / "0"
+    ]
 
 
 def _create_raw_tile(
@@ -486,7 +506,9 @@ def test_assemble_scene_mosaic_preserves_raw_tiles(
     assert all(f"raw_{index}" in root for index in range(3))
     source_tiles = root["scene_0"].attrs["zen_scene"]["source_tiles"]
     assert source_tiles[1]["stage_position_xyz"] == [4.5, 1.5, 0.0]
-    assert root["scene_0"].attrs["zen_scene"]["overlap_policy"] == ("higher_m_index")
+    assert root["scene_0"].attrs["zen_scene"]["overlap_policy"] == (
+        "higher_m_index"
+    )
 
 
 def test_assemble_scene_mosaic_removes_raw_tiles_when_disabled(

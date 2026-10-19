@@ -144,7 +144,9 @@ class _ThrottledProgressEmitter:
     def __call__(self, current: int, total: int) -> None:
         """Emit boundary events immediately and coalesce intermediate ones."""
         now = self._clock()
-        is_boundary = current < 0 or current <= 1 or (total > 0 and current >= total)
+        is_boundary = (
+            current < 0 or current <= 1 or (total > 0 and current >= total)
+        )
         if not is_boundary and now - self._last_emitted_at < self._interval:
             return
         self._emit(current, total)
@@ -216,7 +218,9 @@ class StreamingViewer:
         # Initialize Napari viewer
         _viewer = napari.current_viewer()
         if _viewer is None:
-            logger.debug("No existing Napari viewer found, creating new one...")
+            logger.debug(
+                "No existing Napari viewer found, creating new one..."
+            )
             _viewer = Viewer()
         self.viewer: Viewer = _viewer
 
@@ -236,12 +240,20 @@ class StreamingViewer:
         self.signals = ViewerSignals()
         self.signals.create_layer.connect(self._create_layer_slot)
         self.signals.update_layer.connect(self._update_layer_slot)
-        self.signals.restructure_complete.connect(self._restructure_complete_slot)
-        self.signals.experiment_finished.connect(self._experiment_finished_slot)
+        self.signals.restructure_complete.connect(
+            self._restructure_complete_slot
+        )
+        self.signals.experiment_finished.connect(
+            self._experiment_finished_slot
+        )
         self.signals.clear_all_layers.connect(self._clear_layers)
         self.signals.open_omezarr.connect(self._open_omezarr_slot)
-        self.signals.experiment_metadata_loaded.connect(self._apply_experiment_metadata)
-        self.signals.acquisition_warning.connect(self._show_acquisition_warning)
+        self.signals.experiment_metadata_loaded.connect(
+            self._apply_experiment_metadata
+        )
+        self.signals.acquisition_warning.connect(
+            self._show_acquisition_warning
+        )
         self.signals.start_button_text.connect(self._set_start_button_text)
 
         # ========== Layer Management ==========
@@ -256,7 +268,9 @@ class StreamingViewer:
         # Sparse storage: Key = (s, t, m, z, c), Value = image array (Y, X)
         # This allows us to store only acquired frames without pre-allocating full array
         self.frame_data: dict[tuple[int, int, int, int, int], np.ndarray] = {}
-        self.frame_metadata_by_key: dict[tuple[int, int, int, int, int], ImageMetadata] = {}
+        self.frame_metadata_by_key: dict[
+            tuple[int, int, int, int, int], ImageMetadata
+        ] = {}
 
         # Ordered list of all frame keys for reconstructing arrays
         self.frame_keys: list[tuple[int, int, int, int, int]] = []
@@ -350,28 +364,42 @@ class StreamingViewer:
 
         # Title label
         self.experiment_label = QLabel("Available ZEN experiment setups:")
-        self.experiment_label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        self.experiment_label.setStyleSheet(
+            "font-weight: bold; margin-bottom: 5px;"
+        )
 
         # Experiment selector dropdown
         self.dropdown = QComboBox()
         self.dropdown.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.dropdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.dropdown.currentTextChanged.connect(self._on_experiment_changed)
-        self.refresh_experiment_button = QPushButton("Update ZEN Experiment Data")
-        self.refresh_experiment_button.clicked.connect(self.refresh_selected_experiment_metadata)
+        self.refresh_experiment_button = QPushButton(
+            "Update ZEN Experiment Data"
+        )
+        self.refresh_experiment_button.clicked.connect(
+            self.refresh_selected_experiment_metadata
+        )
 
         # Warning label about layer removal
-        warning_label = QLabel("Starting a new Experiment from Napari or ZEN will remove existing layers!")
-        warning_label.setStyleSheet("color: #FF6B35; margin-top: 5px; margin-bottom: 5px;")
+        warning_label = QLabel(
+            "Starting a new Experiment from Napari or ZEN will remove existing layers!"
+        )
+        warning_label.setStyleSheet(
+            "color: #FF6B35; margin-top: 5px; margin-bottom: 5px;"
+        )
         warning_label.setWordWrap(True)
 
         # Start button
         self.start_button = QPushButton("Start Selected Experiment")
-        self.start_button.setStyleSheet("background-color: #0040A6; color: white; border-radius: 6px; padding: 4px;")
+        self.start_button.setStyleSheet(
+            "background-color: #0040A6; color: white; border-radius: 6px; padding: 4px;"
+        )
         self.start_button.clicked.connect(self.on_start_clicked)
 
         self.stop_button = QPushButton("Stop Running Experiment")
-        self.stop_button.setStyleSheet("background-color: #A60000; color: white; border-radius: 6px; padding: 4px;")
+        self.stop_button.setStyleSheet(
+            "background-color: #A60000; color: white; border-radius: 6px; padding: 4px;"
+        )
 
         self.stop_button.clicked.connect(self.on_stop_clicked)
         self.stop_button.setVisible(False)
@@ -381,7 +409,9 @@ class StreamingViewer:
 
         # ========== Stream Mode ==========
         mode_label = QLabel("Stream mode:")
-        mode_label.setStyleSheet("font-weight: bold; margin-top: 10px; margin-bottom: 2px;")
+        mode_label.setStyleSheet(
+            "font-weight: bold; margin-top: 10px; margin-bottom: 2px;"
+        )
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(
             [
@@ -390,7 +420,9 @@ class StreamingViewer:
                 "OME-ZARR only",
             ]
         )
-        self.mode_combo.setCurrentIndex(1 if self.config.exp_started_by_ui else 0)
+        self.mode_combo.setCurrentIndex(
+            1 if self.config.exp_started_by_ui else 0
+        )
 
         # Channel filter row (Display only mode)
         self.channel_filter_row = QWidget()
@@ -405,7 +437,9 @@ class StreamingViewer:
             "Filter the live stream to one channel, or receive all channels.\n"
             "Channel labels start at 1; ZEN indices start at 0."
         )
-        self.channel_filter_combo.currentIndexChanged.connect(self._on_channel_filter_changed)
+        self.channel_filter_combo.currentIndexChanged.connect(
+            self._on_channel_filter_changed
+        )
         ch_layout.addWidget(ch_label)
         ch_layout.addWidget(self.channel_filter_combo)
 
@@ -417,14 +451,18 @@ class StreamingViewer:
             "frame history during acquisition."
         )
         self.chk_live_latest.toggled.connect(self._set_live_latest_preference)
-        self.signals.set_live_preview_option_enabled.connect(self.chk_live_latest.setEnabled)
+        self.signals.set_live_preview_option_enabled.connect(
+            self.chk_live_latest.setEnabled
+        )
 
         # Output directory row
         self.omezarr_dir_row = QWidget()
         dir_layout = QHBoxLayout(self.omezarr_dir_row)
         dir_layout.setContentsMargins(0, 0, 0, 0)
         self.omezarr_dir_edit = QLineEdit(
-            self.config.default_output_dir if self.config.default_output_dir else str(Path.home() / "Documents")
+            self.config.default_output_dir
+            if self.config.default_output_dir
+            else str(Path.home() / "Documents")
         )
         self.omezarr_dir_edit.setPlaceholderText("Output directory")
         browse_button = QPushButton("...")
@@ -439,7 +477,9 @@ class StreamingViewer:
         comp_layout.setContentsMargins(0, 0, 0, 0)
         comp_label = QLabel("Compression:")
         self.compression_combo = QComboBox()
-        self.compression_combo.addItems(["blosc-zstd", "blosc-lz4", "zstd", "none"])
+        self.compression_combo.addItems(
+            ["blosc-zstd", "blosc-lz4", "zstd", "none"]
+        )
         comp_layout.addWidget(comp_label)
         comp_layout.addWidget(self.compression_combo)
 
@@ -537,8 +577,12 @@ class StreamingViewer:
         self.spin_pyramid_levels.setRange(1, 6)
         self.spin_pyramid_levels.setValue(3)
         self.spin_pyramid_levels.setEnabled(False)
-        self.spin_pyramid_levels.setToolTip("Number of 2x Y/X downsampled levels to append.")
-        self.chk_create_pyramid.toggled.connect(self.spin_pyramid_levels.setEnabled)
+        self.spin_pyramid_levels.setToolTip(
+            "Number of 2x Y/X downsampled levels to append."
+        )
+        self.chk_create_pyramid.toggled.connect(
+            self.spin_pyramid_levels.setEnabled
+        )
 
         dim_form.addRow("Time points (T):", self.spin_t)
         dim_form.addRow("Channels (C):", self.spin_c)
@@ -609,7 +653,9 @@ class StreamingViewer:
         self._on_mode_changed(self.mode_combo.currentIndex())
 
         # Add dock widget to napari window
-        self.viewer.window.add_dock_widget(self.dropdown_widget, name="Experiment Selector", area="right")
+        self.viewer.window.add_dock_widget(
+            self.dropdown_widget, name="Experiment Selector", area="right"
+        )
 
         logger.debug("Napari viewer initialized")
 
@@ -649,7 +695,9 @@ class StreamingViewer:
         self.chk_live_latest.setVisible(not show_zarr)
         self.omezarr_dir_row.setVisible(show_zarr)
         self.omezarr_comp_row.setVisible(show_zarr)
-        self.dim_panel.setVisible(not watch_zen and self._selected_experiment_metadata is not None)
+        self.dim_panel.setVisible(
+            not watch_zen and self._selected_experiment_metadata is not None
+        )
         self.omezarr_options_panel.setVisible(show_zarr)
         if not show_zarr:
             self._refresh_channel_filter()
@@ -700,7 +748,11 @@ class StreamingViewer:
         metadata = getattr(self, "_selected_experiment_metadata", None)
         positions = getattr(metadata, "positions", ()) if metadata else ()
         scenes = getattr(metadata, "scenes", 0) if metadata else 0
-        scene_indices = {position.get("scene_index") for position in positions if isinstance(position, dict)}
+        scene_indices = {
+            position.get("scene_index")
+            for position in positions
+            if isinstance(position, dict)
+        }
         complete = (
             scenes > 0
             and len(positions) == scenes
@@ -722,7 +774,11 @@ class StreamingViewer:
             return
 
         well_ids = list(
-            dict.fromkeys(str(position.get("well_id")) for position in positions if position.get("well_id"))
+            dict.fromkeys(
+                str(position.get("well_id"))
+                for position in positions
+                if position.get("well_id")
+            )
         )
         suffix = f" ({', '.join(well_ids)})" if well_ids else ""
         self.chk_hcs_layout.setText(f"Write HCS plate layout{suffix}")
@@ -736,7 +792,9 @@ class StreamingViewer:
         checkbox = getattr(self, "chk_keep_source_tiles", None)
         if checkbox is None:
             return
-        hcs_active = self.chk_hcs_layout.isVisible() and self.chk_hcs_layout.isChecked()
+        hcs_active = (
+            self.chk_hcs_layout.isVisible() and self.chk_hcs_layout.isChecked()
+        )
         checkbox.setVisible(self.omezarr_enabled and not hcs_active)
         checkbox.setEnabled(not hcs_active)
 
@@ -760,7 +818,10 @@ class StreamingViewer:
         metadata = self._selected_experiment_metadata
         if self.watch_enabled:
             channel_count = 16
-        elif metadata is not None and metadata.experiment_name == self.dropdown.currentText():
+        elif (
+            metadata is not None
+            and metadata.experiment_name == self.dropdown.currentText()
+        ):
             channel_count = metadata.channels
         else:
             channel_count = 0
@@ -770,15 +831,22 @@ class StreamingViewer:
             self.channel_filter_combo.clear()
             self.channel_filter_combo.addItem("All channels", None)
             for channel_index in range(channel_count):
-                self.channel_filter_combo.addItem(str(channel_index + 1), channel_index)
+                self.channel_filter_combo.addItem(
+                    str(channel_index + 1), channel_index
+                )
             selected_index = self.channel_filter_combo.findData(selected)
             self.channel_filter_combo.setCurrentIndex(max(0, selected_index))
         finally:
             self.channel_filter_combo.blockSignals(previous)
 
         self._pending_channel_index = None
-        if self.channel_filter_combo.currentData() != self._effective_channel_index:
-            self._on_channel_filter_changed(self.channel_filter_combo.currentIndex())
+        if (
+            self.channel_filter_combo.currentData()
+            != self._effective_channel_index
+        ):
+            self._on_channel_filter_changed(
+                self.channel_filter_combo.currentIndex()
+            )
         if channel_count == 0:
             self._pending_channel_index = selected
 
@@ -820,8 +888,18 @@ class StreamingViewer:
         if metadata is None:
             return self._expected_total_frames or 0
 
-        channels = 1 if self._effective_channel_index is not None else metadata.channels
-        return metadata.time_points * channels * metadata.z_planes * metadata.tiles * metadata.scenes
+        channels = (
+            1
+            if self._effective_channel_index is not None
+            else metadata.channels
+        )
+        return (
+            metadata.time_points
+            * channels
+            * metadata.z_planes
+            * metadata.tiles
+            * metadata.scenes
+        )
 
     def _received_display_frame_keys(
         self,
@@ -887,7 +965,9 @@ class StreamingViewer:
         plugin will trigger the experiment automatically.
         """
         if self.omezarr_enabled and not self.chk_auto_trigger.isChecked():
-            self.start_button.setText("Enable OME-ZARR Writer (start Experiment manually in ZEN)")
+            self.start_button.setText(
+                "Enable OME-ZARR Writer (start Experiment manually in ZEN)"
+            )
         else:
             self.start_button.setText("Start Selected Experiment")
 
@@ -918,7 +998,9 @@ class StreamingViewer:
         try:
             from napari.utils import progress as nap_progress
         except ImportError:
-            logger.warning("napari.utils.progress unavailable; skipping progress bar")
+            logger.warning(
+                "napari.utils.progress unavailable; skipping progress bar"
+            )
             return
 
         try:
@@ -927,7 +1009,12 @@ class StreamingViewer:
                 self._close_progress_bar()
                 return
 
-            if current >= 0 and self.display_enabled and not self.watch_enabled and not self.is_streaming:
+            if (
+                current >= 0
+                and self.display_enabled
+                and not self.watch_enabled
+                and not self.is_streaming
+            ):
                 return
 
             # First frame detected: update button text so the user
@@ -998,7 +1085,9 @@ class StreamingViewer:
             bars.update(
                 progress_bar
                 for progress_bar in tuple(nap_progress._all_instances)
-                if str(getattr(progress_bar, "desc", "")).startswith(_PROGRESS_DESCRIPTIONS)
+                if str(getattr(progress_bar, "desc", "")).startswith(
+                    _PROGRESS_DESCRIPTIONS
+                )
             )
         except Exception:
             logger.debug(
@@ -1041,12 +1130,21 @@ class StreamingViewer:
             compression=compression,
             zenapi_config=self.config.config_file,
             start_from_script=self.chk_auto_trigger.isChecked(),
-            use_hcs_layout=(self.chk_hcs_layout.isVisible() and self.chk_hcs_layout.isChecked()),
+            use_hcs_layout=(
+                self.chk_hcs_layout.isVisible()
+                and self.chk_hcs_layout.isChecked()
+            ),
             keep_source_tiles=self.chk_keep_source_tiles.isChecked(),
-            pyramid_levels=(self.spin_pyramid_levels.value() if self.chk_create_pyramid.isChecked() else 0),
+            pyramid_levels=(
+                self.spin_pyramid_levels.value()
+                if self.chk_create_pyramid.isChecked()
+                else 0
+            ),
         )
 
-    async def _load_selected_experiment_metadata(self, experiment_name: str) -> Any:
+    async def _load_selected_experiment_metadata(
+        self, experiment_name: str
+    ) -> Any:
         """Load acquisition dimensions from the selected ZEN experiment."""
         if self.connection is None:
             raise RuntimeError("ZEN connection is not available.")
@@ -1059,9 +1157,13 @@ class StreamingViewer:
             experiment_name,
         )
 
-    async def _reload_metadata_for_start(self, experiment_name: str, request_id: int) -> Any:
+    async def _reload_metadata_for_start(
+        self, experiment_name: str, request_id: int
+    ) -> Any:
         """Fetch current XML for a run and publish it unless superseded."""
-        metadata = await self._load_selected_experiment_metadata(experiment_name)
+        metadata = await self._load_selected_experiment_metadata(
+            experiment_name
+        )
         if request_id == self._metadata_request_id:
             self.signals.experiment_metadata_loaded.emit(metadata)
         return metadata
@@ -1081,7 +1183,9 @@ class StreamingViewer:
 
         async def load_metadata() -> None:
             try:
-                metadata = await self._load_selected_experiment_metadata(experiment_name)
+                metadata = await self._load_selected_experiment_metadata(
+                    experiment_name
+                )
                 if request_id != self._metadata_request_id:
                     return
                 self.signals.experiment_metadata_loaded.emit(metadata)
@@ -1128,7 +1232,9 @@ class StreamingViewer:
             f"S={dimensions.scenes}"
         )
 
-    def safe_execution(self, fn: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    def safe_execution(
+        self, fn: Callable[[], Coroutine[Any, Any, None]]
+    ) -> None:
         """
         Helper function to safely schedule async function in appropriate event loop.
 
@@ -1149,7 +1255,9 @@ class StreamingViewer:
             # Standalone mode - schedule in main loop
             try:
                 loop = asyncio.get_running_loop()
-                logger.debug("Scheduling experiment start in main loop (standalone mode)")
+                logger.debug(
+                    "Scheduling experiment start in main loop (standalone mode)"
+                )
                 loop.create_task(fn())
             except RuntimeError as e:
                 # No running loop - this shouldn't happen
@@ -1241,7 +1349,9 @@ class StreamingViewer:
         # ``python ZEN_stream2omezarr.py --experiment-config …``.
         if not self.display_enabled and self.omezarr_enabled:
             if self._zarr_ecfg is None:
-                logger.error("Could not create the OME-ZARR run configuration.")
+                logger.error(
+                    "Could not create the OME-ZARR run configuration."
+                )
                 self.signals.show_start_button.emit(True)
                 return
 
@@ -1270,7 +1380,9 @@ class StreamingViewer:
                         stream_to_omezarr_with_config,
                     )
 
-                    metadata = await self._reload_metadata_for_start(exp_name, request_id)
+                    metadata = await self._reload_metadata_for_start(
+                        exp_name, request_id
+                    )
                     ecfg = replace(
                         base_ecfg,
                         time_points=metadata.time_points,
@@ -1299,7 +1411,9 @@ class StreamingViewer:
                     # emits update_progress on the worker thread; the
                     # slot (_update_progress_slot) creates and updates
                     # the napari progress bar on the main thread.
-                    progress_emitter = _ThrottledProgressEmitter(self.signals.update_progress.emit)
+                    progress_emitter = _ThrottledProgressEmitter(
+                        self.signals.update_progress.emit
+                    )
 
                     self.signals.show_stop_button.emit(True)
                     zarr_path = await stream_to_omezarr_with_config(
@@ -1307,7 +1421,9 @@ class StreamingViewer:
                         progress_callback=progress_emitter,
                         on_experiment_started=record_experiment_id,
                     )
-                    logger.info(f"OME-ZARR standalone complete: " f"{zarr_path}")
+                    logger.info(
+                        f"OME-ZARR standalone complete: " f"{zarr_path}"
+                    )
                     self.signals.open_omezarr.emit(str(zarr_path))
                 except Exception as exc:
                     logger.error(
@@ -1349,7 +1465,9 @@ class StreamingViewer:
                 logger.debug(f"Starting experiment from UI: {exp_name}")
 
                 pipeline = getattr(self.app, "pipeline", None)
-                assert self.connection is not None, "connection must be set before starting an experiment"
+                assert (
+                    self.connection is not None
+                ), "connection must be set before starting an experiment"
                 if pipeline is None:
                     raise RuntimeError("Streaming pipeline is not available")
 
@@ -1357,14 +1475,23 @@ class StreamingViewer:
 
                 # Keep the perpetual all-experiments transport open, arm its
                 # client-side ID filter, and only then start acquisition.
-                self.current_experiment_id = await pipeline.start_targeted_experiment(exp_name)
-                logger.debug(f"Experiment started with ID: {self.current_experiment_id}")
+                self.current_experiment_id = (
+                    await pipeline.start_targeted_experiment(exp_name)
+                )
+                logger.debug(
+                    f"Experiment started with ID: {self.current_experiment_id}"
+                )
 
                 self.signals.show_stop_button.emit(True)
                 # Start monitoring experiment status via ZEN API
-                if self.status_monitor_task and not self.status_monitor_task.done():
+                if (
+                    self.status_monitor_task
+                    and not self.status_monitor_task.done()
+                ):
                     self.status_monitor_task.cancel()
-                self.status_monitor_task = asyncio.create_task(self._monitor_experiment_status())
+                self.status_monitor_task = asyncio.create_task(
+                    self._monitor_experiment_status()
+                )
 
             except Exception as e:
                 pipeline = getattr(self.app, "pipeline", None)
@@ -1373,13 +1500,17 @@ class StreamingViewer:
                 self.current_experiment_id = None
                 logger.error(f"Failed to start experiment: {e}", exc_info=True)
                 self.signals.show_start_button.emit(True)
-                self.signals.start_button_text.emit("Start Selected Experiment (Error)")
+                self.signals.start_button_text.emit(
+                    "Start Selected Experiment (Error)"
+                )
                 raise
 
         try:
             self.safe_execution(start_experiment_async)
         except Exception as e:
-            logger.error(f"Failed to schedule experiment start: {e}", exc_info=True)
+            logger.error(
+                f"Failed to schedule experiment start: {e}", exc_info=True
+            )
             QTimer.singleShot(0, lambda: self.start_button.setVisible(True))
             self.start_button.setText("Start Selected Experiment (No Loop)")
 
@@ -1399,7 +1530,9 @@ class StreamingViewer:
 
         experiment_id = self.current_experiment_id
         if experiment_id is None and self._standalone_zarr_active:
-            logger.warning("Stop requested before the OME-ZARR experiment started.")
+            logger.warning(
+                "Stop requested before the OME-ZARR experiment started."
+            )
             return
 
         # Disable stop button immediately
@@ -1415,10 +1548,14 @@ class StreamingViewer:
             """Stop the captured experiment on the connection's event loop."""
             try:
                 if experiment_id is None:
-                    logger.warning("Stop requested but no active experiment ID — nothing to stop.")
+                    logger.warning(
+                        "Stop requested but no active experiment ID — nothing to stop."
+                    )
                     self.signals.show_start_button.emit(True)
                     return
-                assert self.connection is not None, "connection must be set before stopping an experiment"
+                assert (
+                    self.connection is not None
+                ), "connection must be set before stopping an experiment"
                 await self.connection.stop_experiment(experiment_id)
                 logger.debug(f"Experiment stopped with ID: {experiment_id}")
 
@@ -1433,7 +1570,9 @@ class StreamingViewer:
         try:
             self.safe_execution(stop_experiment_async)
         except Exception as e:
-            logger.error(f"Failed to schedule experiment stop: {e}", exc_info=True)
+            logger.error(
+                f"Failed to schedule experiment stop: {e}", exc_info=True
+            )
             self.signals.show_stop_button.emit(True)
 
         # Clear current experiment ID
@@ -1481,7 +1620,9 @@ class StreamingViewer:
             ZEN-started experiments use timeout-based detection instead.
         """
         if not self.current_experiment_id or not self.connection:
-            logger.warning("Cannot monitor experiment status: missing experiment ID or connection")
+            logger.warning(
+                "Cannot monitor experiment status: missing experiment ID or connection"
+            )
             return
 
         try:
@@ -1489,21 +1630,31 @@ class StreamingViewer:
                 ExperimentServiceRegisterOnStatusChangedRequest,
             )
 
-            logger.debug(f"Starting status monitoring for experiment: {self.current_experiment_id}")
+            logger.debug(
+                f"Starting status monitoring for experiment: {self.current_experiment_id}"
+            )
 
             # Register for status updates from ZEN API
-            api_method = self.connection.experiment_service.register_on_status_changed(
-                ExperimentServiceRegisterOnStatusChangedRequest(self.current_experiment_id)
+            api_method = (
+                self.connection.experiment_service.register_on_status_changed(
+                    ExperimentServiceRegisterOnStatusChangedRequest(
+                        self.current_experiment_id
+                    )
+                )
             )
 
             # Stream status updates until experiment completes
             while True:
                 # Stream is closed after 60 seconds of inactivity
-                response = await asyncio.wait_for(api_method.__anext__(), timeout=60)
+                response = await asyncio.wait_for(
+                    api_method.__anext__(), timeout=60
+                )
 
                 # Check if experiment has stopped running
                 if not response.status.is_experiment_running:
-                    logger.warning("Experiment status changed: experiment no longer running")
+                    logger.warning(
+                        "Experiment status changed: experiment no longer running"
+                    )
 
                     self.signals.show_stop_button.emit(False)
                     # In OME-ZARR only mode do NOT trigger
@@ -1516,9 +1667,13 @@ class StreamingViewer:
                     # in _check_for_restructure – matching the
                     # behaviour of the standalone CLI script.
                     if not self.display_enabled and self.omezarr_enabled:
-                        logger.info("OME-ZARR only mode: deferring finalization to frame-count / timeout triggers.")
+                        logger.info(
+                            "OME-ZARR only mode: deferring finalization to frame-count / timeout triggers."
+                        )
                     else:
-                        received = await self._wait_for_display_stream_completion()
+                        received = (
+                            await self._wait_for_display_stream_completion()
+                        )
                         logger.info(
                             "Finalizing Display mode with %d unique frames",
                             received,
@@ -1538,7 +1693,9 @@ class StreamingViewer:
         except asyncio.CancelledError:
             logger.debug("Experiment status monitoring cancelled")
         except Exception as e:
-            logger.error(f"Error monitoring experiment status: {e}", exc_info=True)
+            logger.error(
+                f"Error monitoring experiment status: {e}", exc_info=True
+            )
             self.signals.experiment_finished.emit()
 
     def _set_start_button_enabled(self, enabled: bool) -> None:
@@ -1564,7 +1721,9 @@ class StreamingViewer:
             # OME-ZARR mode without auto-trigger: writer is armed but
             # no experiment is running yet in ZEN Blue.
             if self.omezarr_enabled and not self.chk_auto_trigger.isChecked():
-                self.start_button.setText("Writer Armed — start ZEN Experiment")
+                self.start_button.setText(
+                    "Writer Armed — start ZEN Experiment"
+                )
             else:
                 self.start_button.setText("Experiment Running...")
 
@@ -1593,7 +1752,9 @@ class StreamingViewer:
         if not self.is_streaming:
             self._release_live_preview_option()
 
-    async def add_frame(self, image: np.ndarray, metadata: ImageMetadata) -> None:
+    async def add_frame(
+        self, image: np.ndarray, metadata: ImageMetadata
+    ) -> None:
         """
         Add a frame to the buffer for display (called from worker thread).
 
@@ -1663,10 +1824,16 @@ class StreamingViewer:
 
             # Past the grace period → genuine new acquisition
             logger.info(
-                "New ZEN-started acquisition detected " "(%.1fs after last restructure)",
+                "New ZEN-started acquisition detected "
+                "(%.1fs after last restructure)",
                 elapsed,
             )
-            if self.image_layers or self.image_layer or self.frame_data or self._zarr_stream is not None:
+            if (
+                self.image_layers
+                or self.image_layer
+                or self.frame_data
+                or self._zarr_stream is not None
+            ):
                 self.signals.clear_all_layers.emit()
                 self.image_layers.clear()
                 self.frame_data.clear()
@@ -1694,13 +1861,17 @@ class StreamingViewer:
         omezarr_only = not self.display_enabled and self.omezarr_enabled
         if omezarr_only:
             if self.restructure_task is None or self.restructure_task.done():
-                self.restructure_task = asyncio.create_task(self._check_for_restructure())
+                self.restructure_task = asyncio.create_task(
+                    self._check_for_restructure()
+                )
         else:
             if self.restructure_task and not self.restructure_task.done():
                 self.restructure_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self.restructure_task
-            self.restructure_task = asyncio.create_task(self._check_for_restructure())
+            self.restructure_task = asyncio.create_task(
+                self._check_for_restructure()
+            )
 
         # Process buffer with lock protection
         if not self.is_processing:
@@ -1767,8 +1938,14 @@ class StreamingViewer:
             # skip frame_data buffering and layer updates.
             if self.omezarr_enabled:
                 all_received = self._process_zarr_frames(images, metadata_list)
-                if all_received and not self.display_enabled and not self._zarr_finalizing:
-                    logger.info("All expected frames received - scheduling zarr finalization.")
+                if (
+                    all_received
+                    and not self.display_enabled
+                    and not self._zarr_finalizing
+                ):
+                    logger.info(
+                        "All expected frames received - scheduling zarr finalization."
+                    )
                     asyncio.create_task(self.finalize_zarr_acquisition())
                 return
 
@@ -1810,7 +1987,9 @@ class StreamingViewer:
 
             if images:
                 # Store remaining frames
-                for image, metadata in zip(images, metadata_list, strict=False):
+                for image, metadata in zip(
+                    images, metadata_list, strict=False
+                ):
                     key = (
                         metadata.frame_s,
                         metadata.frame_t,
@@ -1989,7 +2168,9 @@ class StreamingViewer:
 
         if self.is_streaming:
             # During streaming: use simple linear layout (N, 1, 1, 1, 1, Y, X)
-            assert self.image_shape is not None, "image_shape must be set before building array"
+            assert (
+                self.image_shape is not None
+            ), "image_shape must be set before building array"
             shape = (
                 total_frames,
                 1,
@@ -2009,7 +2190,9 @@ class StreamingViewer:
         else:
             # This should never happen in streaming-only mode
             # Restructure is handled by _check_for_restructure which creates separate layers
-            raise RuntimeError("_build_dense_array should only be called during streaming")
+            raise RuntimeError(
+                "_build_dense_array should only be called during streaming"
+            )
 
         return data_array
 
@@ -2049,7 +2232,9 @@ class StreamingViewer:
                 and self._zarr_stream is None
                 and self._zarr_frame_count == 0
             ):
-                logger.debug("No streaming layer, frame data or zarr - stream exists, skipping restructure check")
+                logger.debug(
+                    "No streaming layer, frame data or zarr - stream exists, skipping restructure check"
+                )
                 return
 
             # For napari-started experiments in display mode,
@@ -2059,8 +2244,12 @@ class StreamingViewer:
             # use a timeout — just like the standalone CLI script
             # — because the experiment-finished signal arrives
             # before all pixel data has been delivered.
-            if self.current_experiment_id and not (not self.display_enabled and self.omezarr_enabled):
-                logger.debug("Napari-started experiment: status monitoring will trigger restructure")
+            if self.current_experiment_id and not (
+                not self.display_enabled and self.omezarr_enabled
+            ):
+                logger.debug(
+                    "Napari-started experiment: status monitoring will trigger restructure"
+                )
                 await asyncio.Event().wait()  # Never completes, only cancelled
             else:
                 # Timeout-based detection.  Used for ZEN-started
@@ -2071,20 +2260,26 @@ class StreamingViewer:
                 # re-checking every second so the task doesn't
                 # need to be cancelled/restarted on every frame.
                 timeout = self.config.restructure_timeout
-                logger.debug(f"Inactivity-timeout mode: waiting {timeout}s of silence ...")
+                logger.debug(
+                    f"Inactivity-timeout mode: waiting {timeout}s of silence ..."
+                )
                 while True:
                     await asyncio.sleep(1.0)
                     # Bail out if the standalone OME-ZARR writer
                     # took over (it handles its own finalization).
                     if self._standalone_zarr_active:
-                        logger.debug("Standalone zarr writer active - aborting pipeline restructure.")
+                        logger.debug(
+                            "Standalone zarr writer active - aborting pipeline restructure."
+                        )
                         return
                     idle = time.time() - self.last_frame_time
                     if idle >= timeout:
                         break
 
                 if not self.display_enabled and self.omezarr_enabled:
-                    logger.warning("Triggering zarr finalization - due to timeout")
+                    logger.warning(
+                        "Triggering zarr finalization - due to timeout"
+                    )
                     await self.finalize_zarr_acquisition()
                 else:
                     logger.warning("Triggering restructure - due to timeout")
@@ -2116,7 +2311,10 @@ class StreamingViewer:
         """
         # Idempotency guard – prevent double finalization.
         if self._zarr_finalizing:
-            logger.debug("finalize_zarr_acquisition already " "running / completed – skipping.")
+            logger.debug(
+                "finalize_zarr_acquisition already "
+                "running / completed – skipping."
+            )
             return
         self._zarr_finalizing = True
 
@@ -2125,7 +2323,10 @@ class StreamingViewer:
         # keep coming (inactivity-based, like the CLI script).
         # Each arriving frame resets the countdown via
         # ``last_frame_time``.
-        if self._zarr_total_expected > 0 and self._zarr_frame_count < self._zarr_total_expected:
+        if (
+            self._zarr_total_expected > 0
+            and self._zarr_frame_count < self._zarr_total_expected
+        ):
             inactivity_limit = 30.0  # seconds
             logger.info(
                 f"Safety-net: waiting for remaining "
@@ -2153,7 +2354,10 @@ class StreamingViewer:
 
         # Drain any frames still in the buffer.
         if self.image_buffer:
-            logger.debug(f"Flushing {len(self.image_buffer)} buffered " "frames before finalizing.")
+            logger.debug(
+                f"Flushing {len(self.image_buffer)} buffered "
+                "frames before finalizing."
+            )
             async with self.processing_lock:
                 buf_images = list(self.image_buffer)
                 buf_meta = list(self.metadata_buffer)
@@ -2162,7 +2366,10 @@ class StreamingViewer:
                 self._process_zarr_frames(buf_images, buf_meta)
 
         if self._zarr_stream is None and self._zarr_frame_count == 0:
-            logger.warning("finalize_zarr_acquisition called but no " "zarr data exists, skipping...")
+            logger.warning(
+                "finalize_zarr_acquisition called but no "
+                "zarr data exists, skipping..."
+            )
             return
 
         # Close the on-the-fly OME-ZARR stream.
@@ -2206,7 +2413,10 @@ class StreamingViewer:
         # Drain any frames still buffered but not yet in
         # frame_data.
         if self.image_buffer:
-            logger.debug(f"Flushing {len(self.image_buffer)} buffered " "frames before restructure.")
+            logger.debug(
+                f"Flushing {len(self.image_buffer)} buffered "
+                "frames before restructure."
+            )
             async with self.processing_lock:
                 buf_images = list(self.image_buffer)
                 buf_meta = list(self.metadata_buffer)
@@ -2226,12 +2436,17 @@ class StreamingViewer:
                 self._update_frame_keys()
 
         if not self.frame_data:
-            logger.warning("Restructure called but no frame data " "exists, skipping...")
+            logger.warning(
+                "Restructure called but no frame data " "exists, skipping..."
+            )
             return
 
         # Check if channel layers already exist
         if self.image_layers:
-            logger.warning("Restructure called but channel layers " "already exist, skipping...")
+            logger.warning(
+                "Restructure called but channel layers "
+                "already exist, skipping..."
+            )
             return
 
         # Finalise the on-the-fly OME-ZARR stream if enabled.
@@ -2245,7 +2460,9 @@ class StreamingViewer:
                 )
 
         if not self.image_layer:
-            logger.warning("Restructure called but no streaming layer exists, skipping...")
+            logger.warning(
+                "Restructure called but no streaming layer exists, skipping..."
+            )
             return
 
         tile_geometries: dict[tuple[int, int], TileGeometry] = {}
@@ -2330,7 +2547,9 @@ class StreamingViewer:
         # is reliable even if perform_restructure emitted the signal twice
         # before the first slot invocation completed.
         if self.image_layers:
-            logger.warning("Restructure slot called but channel layers already exist, ignoring duplicate signal.")
+            logger.warning(
+                "Restructure slot called but channel layers already exist, ignoring duplicate signal."
+            )
             return
 
         # Remove the streaming layer
@@ -2384,7 +2603,10 @@ class StreamingViewer:
                 self._owned_layers = []
             self._owned_layers.append(self.image_layers[channel_idx])
 
-            logger.debug(f"Created {data['name']} with shape (STZYX): " f"{data['data'].shape}, scale: {layer_scale}")
+            logger.debug(
+                f"Created {data['name']} with shape (STZYX): "
+                f"{data['data'].shape}, scale: {layer_scale}"
+            )
 
         # Update axis labels for 5D scene mosaics.
         self.viewer.dims.axis_labels = ("S", "T", "Z", "Y", "X")
@@ -2392,7 +2614,9 @@ class StreamingViewer:
         for axis in range(min(3, self.viewer.dims.ndim)):
             self.viewer.dims.set_current_step(axis, 0)
 
-        logger.debug(f"Split into {len(self.unique_channels)} channel layers with STZYX scene mosaics")
+        logger.debug(
+            f"Split into {len(self.unique_channels)} channel layers with STZYX scene mosaics"
+        )
 
         # Clean up
         if hasattr(self, "_pending_channel_data"):
@@ -2463,7 +2687,10 @@ class StreamingViewer:
 
         ecfg = self._zarr_ecfg
         if ecfg is None:
-            logger.error("OME-ZARR mode active but its run configuration " "was not created.")
+            logger.error(
+                "OME-ZARR mode active but its run configuration "
+                "was not created."
+            )
             return False
 
         num_t = ecfg.time_points
@@ -2476,7 +2703,9 @@ class StreamingViewer:
         output_dir = Path(ecfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._zarr_path = output_dir / f"{ecfg.experiment_name}_{timestamp}.ome.zarr"
+        self._zarr_path = (
+            output_dir / f"{ecfg.experiment_name}_{timestamp}.ome.zarr"
+        )
 
         # Precompute (t, s, m, c, z) → linear_index.
         # Iteration order: T → P(S*M) → C → Z (matches ome-writers).
@@ -2495,7 +2724,9 @@ class StreamingViewer:
 
         dimensions: list[Dimension] = []
         if num_t > 1:
-            dimensions.append(Dimension(name="t", count=num_t, chunk_size=1, type="time"))
+            dimensions.append(
+                Dimension(name="t", count=num_t, chunk_size=1, type="time")
+            )
         if num_positions > 1:
             pos_coords = [
                 Position(
@@ -2508,7 +2739,9 @@ class StreamingViewer:
             ]
             dimensions.append(Dimension(name="p", type="position", coords=pos_coords))  # type: ignore[arg-type]
         if num_c > 1:
-            dimensions.append(Dimension(name="c", count=num_c, chunk_size=1, type="channel"))
+            dimensions.append(
+                Dimension(name="c", count=num_c, chunk_size=1, type="channel")
+            )
         if num_z > 1:
             dimensions.append(
                 Dimension(
@@ -2607,7 +2840,9 @@ class StreamingViewer:
             )
             lin_idx = self._zarr_coord_to_linear.get(key)
             if lin_idx is None:
-                logger.warning(f"Unexpected frame coordinate {key} – skipping.")
+                logger.warning(
+                    f"Unexpected frame coordinate {key} – skipping."
+                )
                 continue
 
             self._zarr_frame_count += 1
@@ -2630,7 +2865,10 @@ class StreamingViewer:
             )
 
         # Signal the caller when all frames have been received.
-        return self._zarr_total_expected > 0 and self._zarr_frame_count >= self._zarr_total_expected
+        return (
+            self._zarr_total_expected > 0
+            and self._zarr_frame_count >= self._zarr_total_expected
+        )
 
     def _finalize_zarr_stream(self) -> None:
         """Flush all pending frames and close the OME-ZARR stream.
@@ -2647,7 +2885,9 @@ class StreamingViewer:
 
         total = len(self._zarr_coord_to_linear)
         logger.info(
-            f"Finalising OME-ZARR " f"({self._zarr_frame_count}/{self._zarr_total_expected} " "frames received)."
+            f"Finalising OME-ZARR "
+            f"({self._zarr_frame_count}/{self._zarr_total_expected} "
+            "frames received)."
         )
 
         while self._zarr_next_write < total:
@@ -2656,9 +2896,14 @@ class StreamingViewer:
                 self._zarr_stream.append(frm, frame_metadata=fmeta)
             else:
                 self._zarr_stream.skip(frames=1)
-                logger.warning("Missing frame at linear index " f"{self._zarr_next_write} – skipped.")
+                logger.warning(
+                    "Missing frame at linear index "
+                    f"{self._zarr_next_write} – skipped."
+                )
             self._zarr_next_write += 1
-            self.signals.update_progress.emit(self._zarr_next_write, self._zarr_total_expected)
+            self.signals.update_progress.emit(
+                self._zarr_next_write, self._zarr_total_expected
+            )
 
         self._zarr_stream.__exit__(None, None, None)
         self._zarr_stream = None
@@ -2694,7 +2939,11 @@ class StreamingViewer:
         try:
             existing_layers = {id(layer) for layer in self.viewer.layers}
             open_in_napari_viewer(Path(zarr_path_str), viewer=self.viewer)
-            self._owned_layers.extend(layer for layer in self.viewer.layers if id(layer) not in existing_layers)
+            self._owned_layers.extend(
+                layer
+                for layer in self.viewer.layers
+                if id(layer) not in existing_layers
+            )
         except Exception as e:
             logger.error(
                 f"Failed to open OME-ZARR in viewer: {e}",
