@@ -23,7 +23,7 @@ directly to OME-ZARR without napari.
 
 - Project phase: alpha / MVP
 - Primary OS target: Windows for ZEN Blue and the ZEN API Gateway
-- Python target: `>=3.11, <3.14`
+- Python target: `>=3.12, <3.15`
 
 ## Known limitations
 
@@ -97,20 +97,57 @@ docs/
 - ZEISS ZEN Blue with ZEN API Gateway installed
 - A valid ZEN control token
 - Access to the ZEN API certificate (`ZenApiPersonalSigningRootCA.pem`)
-- Python 3.11-3.13 with a Qt backend supported by napari
-- An authorized, compatible ZEISS `zen_api` wheel (not distributed on PyPI)
+- Python 3.12-3.14 with a Qt backend supported by napari
+- Authorized, compatible `zen_api` and `zen_api_utils` wheels from
+  [ZEISS OAD](https://github.com/zeiss-microscopy/OAD/tree/master/ZEN-API)
+  (neither package is distributed on PyPI)
 
 ## Installation
 
-Install the authorized ZEN API wheel into the same environment as napari:
+> **Required before a normal PyPI installation:** `zen_api` and `zen_api_utils`
+> are required dependencies, but pip cannot discover their GitHub wheels on
+> PyPI. On a fresh environment, `pip install napari-zenapi-streaming` will fail
+> with a resolver error such as `No matching distribution found for zen_api`.
+> Install both compatible wheels as shown below, then retry the plugin install.
+> This happens before plugin code runs, so the plugin cannot display a custom
+> installation error or GUI message.
+
+### Install the required ZEN wheels
+
+Use the same Python environment for the wheels, the plugin, and napari. The
+current dependency requirements are:
+
+- `zen_api>=2026.5.1,<=2026.11.1`: choose a version compatible with your ZEN API
+  Gateway.
+- `zen_api_utils>=0.1.0,<0.2`: utilities have their own version number, separate
+  from the API release.
+
+For example, install API `2026.7.1` and utilities `0.1.0` from OAD:
 
 ```powershell
-python -m pip install "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl"
+python -m pip install `
+  "https://raw.githubusercontent.com/zeiss-microscopy/OAD/master/ZEN-API/python_packages/zen_api-2026.7.1/dist/zen_api-2026.7.1-py3-none-any.whl" `
+  "https://raw.githubusercontent.com/zeiss-microscopy/OAD/master/ZEN-API/zen_api_utils/dist/zen_api_utils-0.1.0-py3-none-any.whl"
 ```
 
-Replace the example path with the wheel supplied for your gateway. Do not
-commit the wheel, token, or certificate to this repository without confirming
-redistribution rights. There is no public wheel download URL configured here.
+The backtick is PowerShell's line-continuation character. Alternatively, pass
+the paths to your downloaded authorized wheels:
+
+```powershell
+python -m pip install "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl" "C:\path\to\authorized\zen_api_utils-0.1.0-py3-none-any.whl"
+```
+
+Replace the example paths and API version with the wheels supplied for your
+gateway. Do not commit wheels, tokens, or certificates to this repository
+without confirming redistribution rights.
+
+### Install the plugin
+
+For a published PyPI release:
+
+```powershell
+python -m pip install napari-zenapi-streaming
+```
 
 From this checkout, install the plugin:
 
@@ -121,16 +158,28 @@ python -m pip install .
 For a downloaded release wheel, pass that wheel path instead of `.`. For
 development use `python -m pip install -e ".[dev,testing]"`.
 
+The two ZEN wheel URLs or paths can also be supplied alongside the plugin in
+one `python -m pip install` command; installing them beforehand is not required
+when they are provided explicitly. Keep the required version constraints in
+the plugin metadata rather than using `--no-deps` to bypass them.
+
+If pip still reports a missing ZEN dependency, confirm that both wheels satisfy
+the version ranges above and were installed with the same `python` executable
+used for the plugin. Run `python -m pip check` after installation to check for
+missing or incompatible dependencies.
+
+### Conda environment
+
 Alternatively, create the supplied Conda environment first, then install the
-authorized wheel and this plugin as above:
+two authorized wheels and this plugin as above:
 
 ```bash
 conda env create -f python_env/env_zenapi_napari.yml
 conda activate zenapi-napari
 ```
 
-The Conda manifest intentionally does not download `zen_api`; installing that
-wheel separately is required for both installation routes.
+The Conda manifest intentionally does not download the ZEN wheels; supplying
+both `zen_api` and `zen_api_utils` is required for both installation routes.
 
 ## Configuration
 
