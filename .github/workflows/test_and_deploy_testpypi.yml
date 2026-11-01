@@ -18,6 +18,8 @@ jobs:
         timeout-minutes: 30
         env:
             QT_QPA_PLATFORM: offscreen
+            QT_API: pyqt6
+            PYTEST_QT_API: pyqt6
             AIOCP_MAX_WORKERS: "1"
         strategy:
             fail-fast: false

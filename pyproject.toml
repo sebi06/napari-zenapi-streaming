@@ -55,7 +55,7 @@ testing = [
     "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
     "pytest-timeout",  # https://pypi.org/project/pytest-timeout/
     "napari",
-    "pyqt5",
+    "pyqt6>=6.7,<6.10",
 ]
 
 [project.entry-points."napari.manifest"]
