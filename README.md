@@ -5,16 +5,19 @@ microscopy image data from ZEISS ZEN Blue into napari via the ZEN API (gRPC).
 
 It supports three workflows selectable from the plugin UI:
 
-| Mode                                   | What it does                                                                                                                                                   |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Display: watch ZEN experiment**      | Passively displays an experiment started in ZEN Blue. Channel choices are All or 1-16, independent of the selected setup; its expected frame count is unknown. |
-| **Display: start selected experiment** | Starts the selected setup from napari and displays its frames. Channel choices match the setup's XML channel count.                                            |
-| **OME-ZARR only**                      | Writes frames directly to an OME-ZARR file on-the-fly using the standalone writer.                                                                             |
+- **Display: watch ZEN experiment** – passively displays an experiment
+  started in ZEN Blue. Channel choices are All or 1-16, independent of the
+  selected setup; its expected frame count is unknown.
+- **Display: start selected experiment** – starts the selected setup from
+  napari and displays its frames. Channel choices match the setup's XML
+  channel count.
+- **OME-ZARR only** – writes frames directly to an OME-ZARR file on-the-fly
+  using the standalone writer.
 
-Display workflows use the same live reader and restructure received frames into
-per-channel scene mosaics. Channel labels are 1-based; the ZEN API filter uses
-zero-based indices. The filter defaults to All channels when a previously
-selected channel is not available in the new mode or experiment.
+Display workflows use the same live reader and restructure received frames
+into per-channel scene mosaics. Channel labels are 1-based; the ZEN API filter
+uses zero-based indices. The filter defaults to All channels when a
+previously selected channel is not available in the new mode or experiment.
 
 A **standalone CLI** (`ZEN_stream2omezarr.py`) is also available to stream
 directly to OME-ZARR without napari.
@@ -27,15 +30,17 @@ directly to OME-ZARR without napari.
 
 ## Known limitations
 
-- ZEN Blue and the ZEN API Gateway are required for live acquisition. Automated
-  tests use simulated responses; they do not establish end-to-end throughput or
-  frame completeness on real hardware. ZEN Blue and its gateway run on Windows.
+- ZEN Blue and the ZEN API Gateway are required for live acquisition.
+  Automated tests use simulated responses; they do not establish end-to-end
+  throughput or frame completeness on real hardware. ZEN Blue and its gateway
+  run on Windows.
 - Running napari on a separate Linux host may be possible, but this remote
   topology is experimental and not officially supported. It requires a fast,
   reliable connection to the Windows gateway and expertise configuring gateway
-  certificates and trust for the remote client; it has not been validated here.
-- The OME-ZARR writer accepts only 2D `GRAY8` and `GRAY16` frames. Color pixel
-  types are not supported by that output path.
+  certificates and trust for the remote client; it has not been validated
+  here.
+- The OME-ZARR writer accepts only 2D `GRAY8` and `GRAY16` frames. Color
+  pixel types are not supported by that output path.
 - ZEN-started Display mode monitors the global pixel stream without a known
   experiment ID; run only one acquisition at a time in this mode.
 - Display mode retains received frames in memory for final scene assembly.
@@ -44,8 +49,8 @@ directly to OME-ZARR without napari.
 - Out-of-order OME-ZARR frames use a bounded pending buffer. If the stream
   stays incomplete until the inactivity timeout, missing positions are
   skipped rather than recovered from ZEN. The configured writer retains the
-  partial store, writes `acquisition_status.json`, and reports failure instead
-  of success. Inspect the report before using partial output.
+  partial store, writes `acquisition_status.json`, and reports failure
+  instead of success. Inspect the report before using partial output.
 - Display mode currently assumes `uint16` input and normalizes every frame
   for preview. Its restructured layers are not raw quantitative image data.
   Use configured OME-ZARR output to retain raw GRAY8/GRAY16 intensities.
@@ -76,7 +81,7 @@ src/napari_zen_streaming/
   main.py              # App entrypoint and orchestration
   ZEN_config.py        # Runtime config dataclasses + env parsing
   ZEN_init.py          # gRPC connection + experiment lifecycle helpers
-  ZEN_pipeline.py      # Async streaming reader/processor pipeline (Display mode)
+  ZEN_pipeline.py      # Async reader/processor pipeline (Display mode)
   ZEN_ui.py            # Viewer UI, layer lifecycle, mode switching
   ZEN_utils.py         # Metadata + image processing functions
   ZEN_omezarr.py       # OME-ZARR helpers, ExperimentConfig, viewer launchers
@@ -127,16 +132,19 @@ current dependency requirements are:
 For example, install API `2026.7.1` and utilities `0.1.0` from OAD:
 
 ```powershell
+$base = "https://github.com/zeiss-microscopy/OAD/releases/download"
 python -m pip install `
-  "https://github.com/zeiss-microscopy/OAD/releases/download/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" `
-  "https://github.com/zeiss-microscopy/OAD/releases/download/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
+  "$base/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" `
+  "$base/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
 ```
 
 The backtick is PowerShell's line-continuation character. Alternatively, pass
 the paths to your downloaded authorized wheels:
 
 ```powershell
-python -m pip install "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl" "C:\path\to\authorized\zen_api_utils-0.1.0-py3-none-any.whl"
+python -m pip install `
+  "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl" `
+  "C:\path\to\authorized\zen_api_utils-0.1.0-py3-none-any.whl"
 ```
 
 Replace the example paths and API version with the wheels supplied for your
@@ -236,18 +244,25 @@ Define settings in the process environment or a `.env` beside the user-owned
 missing file is an error. Editable checkouts also retain the package-local
 `.env` as a fallback when no user settings file exists.
 
-| Variable                               | Meaning                                                                                      | Default            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------ |
-| `ZEN_EXP_NAME`                         | Initially selected experiment setup                                                          | `ZEN_API_overview` |
-| `ZEN_UI_START`                         | `true`: initially select napari-started Display; `false`: initially select passive ZEN watch | `true`             |
-| `ZEN_CONFIG_FILE`                      | Path to gateway configuration                                                                | user directory     |
-| `ZEN_ENV_FILE`                         | Explicit optional settings file                                                              | user `.env`        |
-| `ZEN_CHANNEL_INDEX`                    | gRPC channel index filter (integer). Leave empty or unset to receive **all channels**        | unset (all)        |
-| `ZEN_RESTRUCTURE_TIMEOUT`              | Idle timeout (seconds) before final restructure in ZEN-started mode                          | `10.0`             |
-| `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` | Use the lightweight 2D latest-frame preview in Display mode                                  | `true`             |
-| `ZEN_OUTPUT_DIR`                       | Default output directory for OME-ZARR files                                                  | unset              |
-| `ZEN_LOG_DIR`                          | Directory containing the rotating `zen_streaming.log` file                                   | platform default   |
-| `ZEN_LOG_LEVEL`                        | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`                        | `INFO`             |
+- `ZEN_EXP_NAME` – initially selected experiment setup. Default:
+  `ZEN_API_overview`.
+- `ZEN_UI_START` – `true` initially selects napari-started Display; `false`
+  selects passive ZEN watch. Default: `true`.
+- `ZEN_CONFIG_FILE` – path to the gateway configuration. Default: user
+  directory.
+- `ZEN_ENV_FILE` – explicit optional settings file. Default: user `.env`.
+- `ZEN_CHANNEL_INDEX` – gRPC channel index filter (integer). Leave empty or
+  unset to receive **all channels**.
+- `ZEN_RESTRUCTURE_TIMEOUT` – idle timeout in seconds before final
+  restructure in ZEN-started mode. Default: `10.0`.
+- `ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE` – use the lightweight 2D
+  latest-frame preview in Display mode. Default: `true`.
+- `ZEN_OUTPUT_DIR` – default output directory for OME-ZARR files. Default:
+  unset.
+- `ZEN_LOG_DIR` – directory containing the rotating `zen_streaming.log`
+  file. Default: platform-specific, see [Logging](#logging).
+- `ZEN_LOG_LEVEL` – `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`.
+  Default: `INFO`.
 
 The optional `.env` supplies runtime settings such as the
 experiment name, startup mode, channel filter, display behavior, and the path
@@ -276,13 +291,12 @@ file because logging is configured when the plugin widget opens.
 
 1. Start napari:
 
-```bash
-napari
-```
+   ```bash
+   napari
+   ```
 
-1. Open plugin widgets:
-
-- `Plugins > ZEN API Streaming > ZEN API Streaming`
+2. Open the plugin widget:
+   `Plugins > ZEN API Streaming > ZEN API Streaming`.
 
 ### Option B: Run as a module
 
@@ -293,7 +307,9 @@ python -m napari_zen_streaming.main
 With CLI overrides:
 
 ```bash
-python -m napari_zen_streaming.main --ui-start true --exp-name ZEN_API_overview --config-file config.ini --channel-index 0 --restructure-timeout 10
+python -m napari_zen_streaming.main --ui-start true \
+    --exp-name ZEN_API_overview --config-file config.ini \
+    --channel-index 0 --restructure-timeout 10
 ```
 
 ## Runtime behavior
@@ -322,23 +338,27 @@ Both Display modes use the full async streaming pipeline (`ZEN_pipeline.py`):
 
 1. **Streaming phase** – Frames are received via `monitor_all_experiments()`,
    processed in `ZEN_utils.process_frame()`, and stored in a sparse dict.
-  The sparse key `(S, T, M, Z, C)` comes directly from each frame's
-  `FramePosition` metadata, including its S and M indices. By default,
-  **Show only last frame during live** displays a fixed 2D YX layer and
-  replaces it with the newest frame without rebuilding acquisition history.
-  Every frame remains in sparse storage for final assembly. Uncheck the
-  option to restore the more expensive 7D frame-history preview. The option
-  is frozen during acquisition and re-enabled after scene assembly.
+   The sparse key `(S, T, M, Z, C)` comes directly from each frame's
+   `FramePosition` metadata, including its S and M indices. By default,
+   **Show only last frame during live** displays a fixed 2D YX layer and
+   replaces it with the newest frame without rebuilding acquisition history.
+   Every frame remains in sparse storage for final assembly. Uncheck the
+   option to restore the more expensive 7D frame-history preview. The option
+   is frozen during acquisition and re-enabled after scene assembly.
 2. **Channel filter** – Changing the filter immediately restarts the pipeline
-  reader. Labels are 1-based, while the gRPC request uses zero-based indices.
-  The initial value comes from `ZEN_CHANNEL_INDEX` in `.env`; leave it empty
-  to receive all channels. An out-of-range choice resets to All channels.
+   reader. Labels are 1-based, while the gRPC request uses zero-based indices.
+   The initial value comes from `ZEN_CHANNEL_INDEX` in `.env`; leave it empty
+   to receive all channels. An out-of-range choice resets to All channels.
 3. **Completion detection** –
    - Napari-started experiments: the status monitor watches
      `is_experiment_running`. Because ZEN can report completion before all
      gRPC pixel data arrives, the plugin then waits for the XML-derived unique
      frame count and uses pixel-stream inactivity as a safety fallback.
    - ZEN-started experiments: inactivity timeout (`ZEN_RESTRUCTURE_TIMEOUT`).
+4. **Post-processing** – The streaming layer is removed and each scene's M
+   tiles are placed from their streamed stage coordinates into per-channel
+   5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
+   the higher M index replace pixels from lower-M tiles.
 
 **Experiment identity:** Display mode keeps one
 `monitor_all_experiments()` subscription open because the targeted ZEN stream
@@ -352,19 +372,14 @@ discoverable. A ZEN-started run has no experiment ID known in advance and
 therefore continues to accept the global stream; keep only one such
 acquisition active at a time.
 
-1. **Post-processing** – The streaming layer is removed and each scene's M
-  tiles are placed from their streamed stage coordinates into per-channel
-  5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
-  the higher M index replace pixels from lower-M tiles.
-
 #### OME-ZARR only (index 2)
 
 Bypasses the pipeline entirely.  When **Start** is clicked:
 
 1. A fresh `ExperimentConfig` is built from the selected experiment, the
-  OME-ZARR controls, the main ZEN API gateway config, and fixed plugin
-  defaults. XML-derived T/C/Z/M/S and Z spacing replace its planning
-  placeholders before writing. No experiment INI is selected by the plugin.
+   OME-ZARR controls, the main ZEN API gateway config, and fixed plugin
+   defaults. XML-derived T/C/Z/M/S and Z spacing replace its planning
+   placeholders before writing. No experiment INI is selected by the plugin.
 2. **Auto-trigger checkbox** — "Start experiment via ZEN API":
    - **Checked (default):** clicking Start immediately triggers the experiment
      via the ZEN API and calls `stream_to_omezarr_with_config(ecfg)`.
@@ -374,49 +389,49 @@ Bypasses the pipeline entirely.  When **Start** is clicked:
      The writer activates as soon as the first frame arrives.
 3. `stream_to_omezarr_with_config(ecfg)` — the **same function** used by the
    standalone CLI — creates its own dedicated gRPC channel, opens the pixel
-  stream, optionally starts the experiment, and queries live status when
-  the first frame arrives. Positive live T/C/Z/S/M counts define the valid
-  coordinate ranges; XML-derived values remain the fallback if status is
-  unavailable.
+   stream, optionally starts the experiment, and queries live status when
+   the first frame arrives. Positive live T/C/Z/S/M counts define the valid
+   coordinate ranges; XML-derived values remain the fallback if status is
+   unavailable.
 4. Each frame is routed by `(T, S, M, C, Z)`. T/S/M/Z come from that frame's
-  `FramePosition`; C comes from the explicit channel subscription because
-  all-channel mode merges one gRPC stream per source channel. The tuple is
-  mapped to the linear append order required by `ome-writers`. Frames may
-  arrive in any order and wait in a `pending` buffer. Duplicate tuples and
-  tuples outside the expected live/configured ranges are skipped; only
-  consecutive linear slots are appended to the Zarr stream.
-  The first frame's runtime `PixelType` selects `uint8` for `GRAY8` or
-  `uint16` for `GRAY16`; payload length is validated before decoding. ZEN
-  width is stored on X and height on Y without a rotation or transpose.
-  Streamed X/Y stage positions and pixel scales retain the same axis names.
-  Auto-triggered runs accept only their returned experiment ID. Manually
-  armed runs pin to the first received experiment ID; ensure that first frame
-  belongs to the intended acquisition. Later unrelated frames are ignored
-  before decoding and frames without an experiment ID are rejected.
+   `FramePosition`; C comes from the explicit channel subscription because
+   all-channel mode merges one gRPC stream per source channel. The tuple is
+   mapped to the linear append order required by `ome-writers`. Frames may
+   arrive in any order and wait in a `pending` buffer. Duplicate tuples and
+   tuples outside the expected live/configured ranges are skipped; only
+   consecutive linear slots are appended to the Zarr stream.
+   The first frame's runtime `PixelType` selects `uint8` for `GRAY8` or
+   `uint16` for `GRAY16`; payload length is validated before decoding. ZEN
+   width is stored on X and height on Y without a rotation or transpose.
+   Streamed X/Y stage positions and pixel scales retain the same axis names.
+   Auto-triggered runs accept only their returned experiment ID. Manually
+   armed runs pin to the first received experiment ID; ensure that first frame
+   belongs to the intended acquisition. Later unrelated frames are ignored
+   before decoding and frames without an experiment ID are rejected.
 5. The loop ends after every unique expected coordinate has arrived, or on
-  inactivity timeout. On timeout, buffered frames are drained and truly
-  missing slots are emitted with `stream.skip()` so the array stays
-  rectangular. The configured writer records expected/received counts and
-  missing `(t, s, m, c, z)` coordinates in `acquisition_status.json` inside
-  the output store. Missing frames raise `IncompleteAcquisitionError`;
-  the CLI exits nonzero and the plugin shows a warning containing the partial
-  output path. Partial stores are retained, but are not auto-opened and do
-  not receive post-acquisition pyramids. Other writer errors also fail the
-  run; a status report is guaranteed only after successful finalization.
+   inactivity timeout. On timeout, buffered frames are drained and truly
+   missing slots are emitted with `stream.skip()` so the array stays
+   rectangular. The configured writer records expected/received counts and
+   missing `(t, s, m, c, z)` coordinates in `acquisition_status.json` inside
+   the output store. Missing frames raise `IncompleteAcquisitionError`;
+   the CLI exits nonzero and the plugin shows a warning containing the partial
+   output path. Partial stores are retained, but are not auto-opened and do
+   not receive post-acquisition pyramids. Other writer errors also fail the
+   run; a status report is guaranteed only after successful finalization.
 6. For generic acquisitions with multiple scenes or tiles, the raw tile
-  streams are finalized into one TCZYX mosaic per scene. Streamed XYZ
-  coordinates and physical pixel scaling determine placement; M identifies
-  the raw tile within S but does not imply a row or column. In overlaps, the
-  highest M index wins, and gaps in irregular scene outlines remain at the
-  array fill value. The `OME/series` list advertises only the scene mosaics.
-  **Keep individual source tiles** controls whether the raw tile groups remain
-  after successful mosaic assembly. It is unchecked by default to avoid
-  duplicated pixel storage. For HCS acquisitions, one frame from every M tile
-  first establishes each scene canvas. The writer then buffers only the tiles
-  for each `(T, S, C, Z)` plane, merges them in memory, and writes the final
-  well image directly. Raw HCS tile arrays are never created, so the store is
-  not reread or rewritten after acquisition. The source-tile control is hidden
-  for HCS output because it does not apply.
+   streams are finalized into one TCZYX mosaic per scene. Streamed XYZ
+   coordinates and physical pixel scaling determine placement; M identifies
+   the raw tile within S but does not imply a row or column. In overlaps, the
+   highest M index wins, and gaps in irregular scene outlines remain at the
+   array fill value. The `OME/series` list advertises only the scene mosaics.
+   **Keep individual source tiles** controls whether the raw tile groups remain
+   after successful mosaic assembly. It is unchecked by default to avoid
+   duplicated pixel storage. For HCS acquisitions, one frame from every M tile
+   first establishes each scene canvas. The writer then buffers only the tiles
+   for each `(T, S, C, Z)` plane, merges them in memory, and writes the final
+   well image directly. Raw HCS tile arrays are never created, so the store is
+   not reread or rewritten after acquisition. The source-tile control is hidden
+   for HCS output because it does not apply.
 7. **Button state sequence:**
    `Start Selected Experiment` → *(click)* →
    `Writer Armed — start ZEN Experiment` *(auto-trigger off)* or
@@ -424,9 +439,9 @@ Bypasses the pipeline entirely.  When **Start** is clicked:
    `Experiment & Stream Running` *(first frame arrived)* →
    back to `Start Selected Experiment` *(done)*.
 8. Worker-to-Qt progress notifications are limited to approximately 10 Hz.
-  This keeps napari responsive without throttling frame reception or
-  OME-ZARR writes; first-frame, final-frame, and completion updates are
-  always delivered.
+   This keeps napari responsive without throttling frame reception or
+   OME-ZARR writes; first-frame, final-frame, and completion updates are
+   always delivered.
 
 The plugin and the configured CLI share the same writer. Both use a dedicated
 gRPC channel while the display pipeline reader is suspended, avoiding frame
@@ -496,13 +511,16 @@ authoritative for physical tile placement.
 
 The writer deliberately separates acquisition planning from frame routing:
 
-| Metadata source                       | Role                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Selected experiment XML               | Planned T/C/Z/S/M and Z spacing; fallback when live status is unavailable.                 |
-| First live `get_status()` response    | Positive T/C/Z/S/M counts used to build the valid coordinate space and expected frame set. |
-| Per-frame `FramePosition`             | T/S/M/Z assignment for that incoming image. C is the merged subscription index.            |
-| First frame `pixel_data.pixel_type`   | OME-ZARR NumPy dtype, validated against the raw payload byte count.                        |
-| Per-frame stage XYZ and pixel scaling | Native X/Y physical placement and scale of each M tile inside its S scene.                 |
+- **Selected experiment XML** – planned T/C/Z/S/M and Z spacing; fallback
+  when live status is unavailable.
+- **First live `get_status()` response** – positive T/C/Z/S/M counts used to
+  build the valid coordinate space and expected frame set.
+- **Per-frame `FramePosition`** – T/S/M/Z assignment for that incoming
+  image. C is the merged subscription index.
+- **First frame `pixel_data.pixel_type`** – OME-ZARR NumPy dtype, validated
+  against the raw payload byte count.
+- **Per-frame stage XYZ and pixel scaling** – native X/Y physical placement
+  and scale of each M tile inside its S scene.
 
 Consequently, ZEN may deliver channel-major or otherwise out-of-order frames
 without changing their destination. Scene membership is always the streamed S
@@ -541,7 +559,8 @@ python -m napari_zen_streaming.ZEN_stream2omezarr \
   `C:\Users\<username>\AppData\Local\napari-zenapi-streaming\logs\zen_streaming.log`
   (`%LOCALAPPDATA%\napari-zenapi-streaming\logs\zen_streaming.log`).
   `AppData` is hidden by default in File Explorer.
-- Log file on Linux/macOS: `$XDG_STATE_HOME/napari-zenapi-streaming/logs/zen_streaming.log`
+- Log file on Linux/macOS:
+  `$XDG_STATE_HOME/napari-zenapi-streaming/logs/zen_streaming.log`
   (or `~/.local/state/napari-zenapi-streaming/logs/zen_streaming.log`)
 - Set `ZEN_LOG_DIR` to override the log directory.
 - Logs rotate at 5 MB and retain three backups.
@@ -552,8 +571,8 @@ python -m napari_zen_streaming.ZEN_stream2omezarr \
   records only milestones, warnings, and errors.
 - Logging format: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
 
-To see live terminal records, launch napari in the configured environment and keep
-that terminal open:
+To see live terminal records, launch napari in the configured environment and
+keep that terminal open:
 
 ```powershell
 napari
@@ -644,26 +663,33 @@ Render the Mermaid sources with Mermaid CLI, or preview `.mmd` files in the
 Mermaid VS Code extension. From the repository root:
 
 ```bash
-npx --yes --package @mermaid-js/mermaid-cli -- mmdc -i docs/napari_zenapi_streaming_flowchart.mmd -o docs/napari_zenapi_streaming_flowchart.png
+npx --yes --package @mermaid-js/mermaid-cli -- mmdc \
+    -i docs/napari_zenapi_streaming_flowchart.mmd \
+    -o docs/napari_zenapi_streaming_flowchart.png
 ```
 
 ## Troubleshooting
 
 - Missing `config.ini`: run `python -m napari_zen_streaming.ZEN_config --init`,
   populate the template, or set `ZEN_CONFIG_FILE` to an existing file.
-- TLS or certificate issues: verify `cert_file` path and that the file is readable.
+- TLS or certificate issues: verify the `cert_file` path and that the file is
+  readable.
 - **Qt5 incompatibility:** install `"PyQt6>=6.7,<6.10"` and select
   `QT_API=pyqt6`. For pytest, also set `PYTEST_QT_API=pyqt6`.
-- No experiments in dropdown: confirm ZEN API Gateway is running and token is valid.
-- Viewer not updating: check `zen_streaming.log` in the user log directory described above for pipeline errors.
-- Restructure too early/late for ZEN-started runs: adjust `ZEN_RESTRUCTURE_TIMEOUT`.
+- No experiments in dropdown: confirm ZEN API Gateway is running and token
+  is valid.
+- Viewer not updating: check `zen_streaming.log` in the user log directory
+  described above for pipeline errors.
+- Restructure too early/late for ZEN-started runs: adjust
+  `ZEN_RESTRUCTURE_TIMEOUT`.
 - **Progress bar stuck on "Streaming frames":** if ZEN stops an experiment
   without the plugin detecting it (e.g. network glitch), click **Stop** to
   dismiss the bar.  Clicking **Start** on the next experiment also clears any
   stale bar automatically.
-- **Incomplete acquisition:** inspect `acquisition_status.json` and the warning's
-  partial-store path. Check frame counts, gateway logs, and inactivity timeout
-  before retrying; a rectangular output array does not imply complete data.
+- **Incomplete acquisition:** inspect `acquisition_status.json` and the
+  warning's partial-store path. Check frame counts, gateway logs, and
+  inactivity timeout before retrying; a rectangular output array does not
+  imply complete data.
 - **Channel filter not taking effect:** ensure no experiment is currently
   running; the reader restarts on combo box change, but an in-flight gRPC
   stream may buffer a few straggler frames.
@@ -685,7 +711,8 @@ python -m build --sdist --wheel
   `"ruff.configurationPreference": "filesystemFirst"` so user-level Ruff
   settings do not override the repository configuration.
 - Tests mock the gateway and cover routing, partial acquisitions, mosaics,
-  metadata refresh, dtype handling, progress, configuration, and layer ownership.
+  metadata refresh, dtype handling, progress, configuration, and layer
+  ownership.
 - A clean Windows environment passed the full test suite with Python 3.12.15,
   napari 0.10.0, PyQt6 6.9.1, ome-writers 0.3.2, ngff-zarr 0.51.0,
   zen-api 2026.7.1, and zen-api-utils 0.1.0. This records one tested
