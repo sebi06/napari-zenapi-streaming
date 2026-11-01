@@ -310,23 +310,14 @@ def _extract_tile_region_positions(
 def _extract_xml_positions(block: ET.Element) -> tuple[dict[str, object], ...]:
     """Extract active sample-holder positions for optional HCS metadata."""
     regions_setup = _find_active_dimension_setup(block, "RegionsSetup")
-    sample_holder = (
-        regions_setup.find("./SampleHolder")
-        if regions_setup is not None
-        else None
-    )
+    sample_holder = regions_setup.find("./SampleHolder") if regions_setup is not None else None
     arrays = (
-        sample_holder.findall("./SingleTileRegionArrays/SingleTileRegionArray")
-        if sample_holder is not None
-        else []
+        sample_holder.findall("./SingleTileRegionArrays/SingleTileRegionArray") if sample_holder is not None else []
     )
     positions: list[dict[str, object]] = []
     scene_index = 0
     for well in arrays:
-        if (
-            not _xml_is_active(well)
-            or _xml_text(well, "IsUsedForAcquisition", "true") != "true"
-        ):
+        if not _xml_is_active(well) or _xml_text(well, "IsUsedForAcquisition", "true") != "true":
             continue
         well_id = well.get("Name", "")
         row, column = _parse_well_id(well_id)
@@ -361,20 +352,12 @@ def _extract_xml_positions(block: ET.Element) -> tuple[dict[str, object], ...]:
 def _parse_xml_tile_layout(block: ET.Element) -> tuple[int, int]:
     """Read per-scene M tiles from active ZEN ``TileRegion`` grids."""
     regions_setup = _find_active_dimension_setup(block, "RegionsSetup")
-    sample_holder = (
-        regions_setup.find("./SampleHolder")
-        if regions_setup is not None
-        else None
-    )
+    sample_holder = regions_setup.find("./SampleHolder") if regions_setup is not None else None
     if sample_holder is None:
         return 1, 1
 
     tile_regions = sample_holder.findall("./TileRegions/TileRegion")
-    active_regions = [
-        region
-        for region in tile_regions
-        if _xml_text(region, "IsUsedForAcquisition", "true") == "true"
-    ]
+    active_regions = [region for region in tile_regions if _xml_text(region, "IsUsedForAcquisition", "true") == "true"]
     if not active_regions:
         return 1, 1
 
@@ -395,9 +378,7 @@ def parse_experiment_xml(
     blocks = root.findall("./ExperimentBlocks/AcquisitionBlock")
     active_blocks = [block for block in blocks if _xml_is_active(block)]
     if not active_blocks:
-        raise ValueError(
-            "The experiment contains no active acquisition blocks."
-        )
+        raise ValueError("The experiment contains no active acquisition blocks.")
     block = active_blocks[0]
 
     time_setup = _find_active_dimension_setup(block, "TimeSeriesSetup")
@@ -453,12 +434,8 @@ async def load_experiment_acquisition(
     experiment_name: str,
 ) -> ExperimentAcquisitionMetadata:
     """Load and export a ZEN experiment, then parse its acquisition XML."""
-    loaded = await experiment_service.load(
-        ExperimentServiceLoadRequest(experiment_name=experiment_name)
-    )
-    exported = await experiment_service.export(
-        ExperimentServiceExportRequest(experiment_id=loaded.experiment_id)
-    )
+    loaded = await experiment_service.load(ExperimentServiceLoadRequest(experiment_name=experiment_name))
+    exported = await experiment_service.export(ExperimentServiceExportRequest(experiment_id=loaded.experiment_id))
     xml = getattr(exported, "xml", None)
     if not isinstance(xml, str) or not xml.strip():
         raise ValueError("ZEN returned an empty experiment XML export.")
@@ -490,23 +467,13 @@ def load_experiment_config(config_path: str | Path) -> ExperimentConfig:
     channel_index = int(ch_idx_raw) if ch_idx_raw else None
 
     # compression: 'none' string -> None
-    compression_raw = cfg.get(
-        "output", "compression", fallback="blosc-zstd"
-    ).strip()
+    compression_raw = cfg.get("output", "compression", fallback="blosc-zstd").strip()
     compression = compression_raw if compression_raw != "none" else None
 
-    shard_raw = (
-        cfg.get("output", "spatial_shard_size_chunks", fallback="2")
-        .strip()
-        .lower()
-    )
-    spatial_shard_size_chunks = (
-        None if shard_raw in {"", "0", "none"} else int(shard_raw)
-    )
+    shard_raw = cfg.get("output", "spatial_shard_size_chunks", fallback="2").strip().lower()
+    spatial_shard_size_chunks = None if shard_raw in {"", "0", "none"} else int(shard_raw)
     if spatial_shard_size_chunks is not None and spatial_shard_size_chunks < 1:
-        raise ValueError(
-            "spatial_shard_size_chunks must be a positive integer, 0, or none"
-        )
+        raise ValueError("spatial_shard_size_chunks must be a positive integer, 0, or none")
     max_pending_frames = cfg.getint(
         "stream",
         "max_pending_frames",
@@ -521,12 +488,8 @@ def load_experiment_config(config_path: str | Path) -> ExperimentConfig:
     return ExperimentConfig(
         experiment_name=cfg.get("experiment", "name"),
         czi_name=cfg.get("experiment", "czi_name", fallback="zenapi_stream"),
-        start_from_script=cfg.getboolean(
-            "experiment", "start_from_script", fallback=False
-        ),
-        overwrite_czi=cfg.getboolean(
-            "experiment", "overwrite_czi", fallback=True
-        ),
+        start_from_script=cfg.getboolean("experiment", "start_from_script", fallback=False),
+        overwrite_czi=cfg.getboolean("experiment", "overwrite_czi", fallback=True),
         time_points=cfg.getint("dimensions", "time_points", fallback=1),
         channels=cfg.getint("dimensions", "channels", fallback=1),
         z_planes=cfg.getint("dimensions", "z_planes", fallback=1),
@@ -575,16 +538,10 @@ async def start_experiment(
     channel, metadata = initialize_zenapi(zenapi_config)
     try:
         exp_service = ExperimentServiceStub(channel=channel, metadata=metadata)
-        my_exp = await exp_service.load(
-            ExperimentServiceLoadRequest(experiment_name=exp_name)
-        )
-        logger.info(
-            f"Loaded experiment: {exp_name} (id={my_exp.experiment_id})"
-        )
+        my_exp = await exp_service.load(ExperimentServiceLoadRequest(experiment_name=exp_name))
+        logger.info(f"Loaded experiment: {exp_name} (id={my_exp.experiment_id})")
 
-        save_path = await exp_service.get_image_output_path(
-            ExperimentServiceGetImageOutputPathRequest()
-        )
+        save_path = await exp_service.get_image_output_path(ExperimentServiceGetImageOutputPathRequest())
         czi_path = Path(save_path.image_output_path) / f"{czi_name}.czi"
         logger.info(f"CZI save location: {czi_path}")
 
@@ -607,9 +564,7 @@ async def start_experiment(
         channel.close()
 
 
-def build_progress_bar(
-    current: int, total: int | None, width: int = 40
-) -> str:
+def build_progress_bar(current: int, total: int | None, width: int = 40) -> str:
     """Render a text progress bar string.
 
     Args:
@@ -652,9 +607,7 @@ def open_in_ndv_viewer(zarr_path: Path) -> None:
         import xarray as xr
         import zarr
     except ImportError as e:
-        logger.warning(
-            f"Cannot open viewer (missing dependency: {e}). Install with: pip install ndv zarr dask xarray"
-        )
+        logger.warning(f"Cannot open viewer (missing dependency: {e}). Install with: pip install ndv zarr dask xarray")
         return
 
     try:
@@ -700,14 +653,10 @@ def open_in_ndv_viewer(zarr_path: Path) -> None:
                 logger.info(f"Applied axis scales: {axis_scales}")
             ndv.imshow(data)
         else:
-            logger.warning(
-                "Could not read axis names from OME-ZARR metadata, showing without labels."
-            )
+            logger.warning("Could not read axis names from OME-ZARR metadata, showing without labels.")
             ndv.imshow(zarr_arr)
     except Exception as e:
-        logger.error(
-            f"Failed to open OME-ZARR in ndv viewer: {e}", exc_info=True
-        )
+        logger.error(f"Failed to open OME-ZARR in ndv viewer: {e}", exc_info=True)
 
 
 def open_in_napari_viewer(
@@ -736,17 +685,13 @@ def open_in_napari_viewer(
         import napari  # noqa: F811
 
     except ImportError as e:
-        logger.warning(
-            f"Cannot open napari viewer (missing dependency: {e}). Install with: pip install napari[all]"
-        )
+        logger.warning(f"Cannot open napari viewer (missing dependency: {e}). Install with: pip install napari[all]")
         return
 
     try:
         import napari_ome_zarr  # noqa: F401
     except ImportError as e:
-        logger.warning(
-            f"Cannot open napari viewer (missing plugin: {e}). Install with: pip install napari-ome-zarr"
-        )
+        logger.warning(f"Cannot open napari viewer (missing plugin: {e}). Install with: pip install napari-ome-zarr")
         return
 
     standalone = viewer is None
@@ -800,9 +745,7 @@ def read_omezarr_axis_names(zarr_path: Path) -> tuple[str, ...] | None:
 
     _, root_meta = image_metadata
 
-    multiscales = (
-        root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
-    )
+    multiscales = root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
     if not isinstance(multiscales, list) or not multiscales:
         return None
     first_multiscale = multiscales[0]
@@ -841,9 +784,7 @@ def read_omezarr_axis_scales(zarr_path: Path) -> dict[str, float] | None:
 
     _, root_meta = image_metadata
 
-    multiscales = (
-        root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
-    )
+    multiscales = root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
     if not isinstance(multiscales, list) or not multiscales:
         return None
     first_multiscale = multiscales[0]
@@ -866,10 +807,7 @@ def read_omezarr_axis_scales(zarr_path: Path) -> dict[str, float] | None:
         return None
 
     try:
-        axis_scales = {
-            str(axis["name"]).upper(): float(scale)
-            for axis, scale in zip(axes, scale_values, strict=True)
-        }
+        axis_scales = {str(axis["name"]).upper(): float(scale) for axis, scale in zip(axes, scale_values, strict=True)}
     except (KeyError, TypeError, ValueError):
         return None
     logger.info(f"OME-ZARR axis scales: {axis_scales}")
@@ -883,11 +821,7 @@ def _read_first_image_metadata(
     root_metadata = zarr_path / "zarr.json"
     candidates = [root_metadata]
     if zarr_path.exists():
-        candidates.extend(
-            path
-            for path in sorted(zarr_path.rglob("zarr.json"))
-            if path != root_metadata
-        )
+        candidates.extend(path for path in sorted(zarr_path.rglob("zarr.json")) if path != root_metadata)
 
     for metadata_path in candidates:
         try:

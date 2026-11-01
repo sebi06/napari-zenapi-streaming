@@ -23,15 +23,10 @@ def user_config_dir(tmp_path: Path, monkeypatch) -> Path:
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 def test_platform_config_directory(platform, tmp_path, monkeypatch) -> None:
     """Windows and XDG settings use a user directory, not site-packages."""
-    monkeypatch.setattr(
-        config_module, "sys", SimpleNamespace(platform=platform)
-    )
+    monkeypatch.setattr(config_module, "sys", SimpleNamespace(platform=platform))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert (
-        config_module.default_config_dir()
-        == tmp_path / "napari-zenapi-streaming"
-    )
+    assert config_module.default_config_dir() == tmp_path / "napari-zenapi-streaming"
 
 
 def test_initialize_config_preserves_existing_settings(
@@ -50,47 +45,24 @@ def test_initialize_config_preserves_existing_settings(
     assert path.read_text(encoding="utf-8") == "user settings"
 
 
-def test_user_config_is_independent_of_install_location(
-    user_config_dir, tmp_path, monkeypatch
-) -> None:
+def test_user_config_is_independent_of_install_location(user_config_dir, tmp_path, monkeypatch) -> None:
     """A wheel installation resolves configuration outside its Python prefix."""
     path = config_module.initialize_user_config()
-    installed_module = (
-        tmp_path
-        / "env"
-        / "Lib"
-        / "site-packages"
-        / "napari_zen_streaming"
-        / "ZEN_config.py"
-    )
+    installed_module = tmp_path / "env" / "Lib" / "site-packages" / "napari_zen_streaming" / "ZEN_config.py"
     monkeypatch.setattr(config_module, "__file__", str(installed_module))
     assert config_module.ZENConfig.from_env().config_file == path
 
 
-def test_missing_wheel_config_reports_user_path(
-    user_config_dir, tmp_path, monkeypatch
-) -> None:
+def test_missing_wheel_config_reports_user_path(user_config_dir, tmp_path, monkeypatch) -> None:
     """Missing settings explain initialization rather than searching Lib."""
-    installed_module = (
-        tmp_path
-        / "env"
-        / "Lib"
-        / "site-packages"
-        / "napari_zen_streaming"
-        / "ZEN_config.py"
-    )
+    installed_module = tmp_path / "env" / "Lib" / "site-packages" / "napari_zen_streaming" / "ZEN_config.py"
     monkeypatch.setattr(config_module, "__file__", str(installed_module))
-    assert (
-        config_module.default_gateway_config()
-        == user_config_dir / "config.ini"
-    )
+    assert config_module.default_gateway_config() == user_config_dir / "config.ini"
     with pytest.raises(FileNotFoundError, match="--init"):
         config_module.ZENConfig.from_env()
 
 
-def test_explicit_relative_config_uses_working_directory(
-    user_config_dir, tmp_path, monkeypatch
-) -> None:
+def test_explicit_relative_config_uses_working_directory(user_config_dir, tmp_path, monkeypatch) -> None:
     """An explicit non-default path is resolved relative to the caller."""
     path = tmp_path / "gateway.ini"
     path.write_text("[api]\n", encoding="utf-8")
@@ -98,15 +70,11 @@ def test_explicit_relative_config_uses_working_directory(
     assert config_module.ZENConfig.from_env().config_file == path
 
 
-def test_runtime_settings_preserve_process_environment(
-    user_config_dir, monkeypatch
-) -> None:
+def test_runtime_settings_preserve_process_environment(user_config_dir, monkeypatch) -> None:
     """User dotenv settings fill missing values but never override exports."""
     user_config_dir.mkdir()
     settings = user_config_dir / ".env"
-    settings.write_text(
-        "ZEN_EXP_NAME=dotenv\nZEN_OUTPUT_DIR=output\n", encoding="utf-8"
-    )
+    settings.write_text("ZEN_EXP_NAME=dotenv\nZEN_OUTPUT_DIR=output\n", encoding="utf-8")
     monkeypatch.setenv("ZEN_EXP_NAME", "process")
     monkeypatch.delenv("ZEN_OUTPUT_DIR", raising=False)
     assert config_module.load_runtime_settings() == settings
@@ -114,25 +82,19 @@ def test_runtime_settings_preserve_process_environment(
     assert config_module.os.environ["ZEN_OUTPUT_DIR"] == "output"
 
 
-def test_experiment_ini_uses_gateway_resolution(
-    user_config_dir, tmp_path, monkeypatch
-) -> None:
+def test_experiment_ini_uses_gateway_resolution(user_config_dir, tmp_path, monkeypatch) -> None:
     """An empty INI gateway path follows ZEN_CONFIG_FILE, not site-packages."""
     from napari_zen_streaming.ZEN_omezarr import load_experiment_config
 
     gateway = tmp_path / "gateway.ini"
     gateway.write_text("[api]\n", encoding="utf-8")
     experiment = tmp_path / "experiment.ini"
-    experiment.write_text(
-        "[experiment]\nname = Exp\n[zenapi]\nconfig =\n", encoding="utf-8"
-    )
+    experiment.write_text("[experiment]\nname = Exp\n[zenapi]\nconfig =\n", encoding="utf-8")
     monkeypatch.setenv("ZEN_CONFIG_FILE", str(gateway))
     assert load_experiment_config(experiment).zenapi_config == str(gateway)
 
 
-def test_explicit_settings_path_is_checked(
-    user_config_dir, tmp_path, monkeypatch
-) -> None:
+def test_explicit_settings_path_is_checked(user_config_dir, tmp_path, monkeypatch) -> None:
     """A misspelled explicit dotenv path fails visibly."""
     monkeypatch.setenv("ZEN_ENV_FILE", str(tmp_path / "missing.env"))
     with pytest.raises(FileNotFoundError, match="Settings file not found"):
