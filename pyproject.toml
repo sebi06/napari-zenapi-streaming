@@ -34,6 +34,7 @@ dependencies = [
     "python-dotenv",
     "ome-writers[acquire-zarr]",
     "ngff-zarr[dask-image]",
+    "zarr>=3",
     "zen_api>=2026.5.1,<=2026.11.1",
     "zen_api_utils>=0.1.0,<0.2",
 ]
