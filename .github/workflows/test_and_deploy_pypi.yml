@@ -41,20 +41,12 @@ jobs:
                   powershell gl-ci-helpers/appveyor/install_opengl.ps1
 
             - name: Install dependencies
+              shell: bash
               run: |
                   python -m pip install --upgrade pip
-                  python -m pip install -e .[testing] build ruff black
-
-            - name: Install ZEN API wheel
-              shell: bash
-              env:
-                  ZEN_API_WHEEL_URL: ${{ secrets.ZEN_API_WHEEL_URL }}
-              run: |
-                  if [[ -z "$ZEN_API_WHEEL_URL" ]]; then
-                    echo "Configure the ZEN_API_WHEEL_URL secret with an authorized wheel URL."
-                    exit 1
-                  fi
-                  python -m pip install "$ZEN_API_WHEEL_URL"
+                  python -m pip install -e ".[testing]" build ruff black \
+                    "https://github.com/zeiss-microscopy/OAD/releases/download/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" \
+                    "https://github.com/zeiss-microscopy/OAD/releases/download/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
 
             - name: Check code quality
               run: python -m ruff check src/napari_zen_streaming

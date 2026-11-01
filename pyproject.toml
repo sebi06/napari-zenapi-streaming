@@ -10,7 +10,7 @@ authors = [
     {name = "Sebastian Rhode", email = "sebastian.rhode@zeiss.com"}
 ]
 classifiers = [
-    "Development Status :: 2 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Framework :: napari",
     "Topic :: Scientific/Engineering :: Image Processing",

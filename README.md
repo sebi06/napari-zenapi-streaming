@@ -126,8 +126,8 @@ For example, install API `2026.7.1` and utilities `0.1.0` from OAD:
 
 ```powershell
 python -m pip install `
-  "https://raw.githubusercontent.com/zeiss-microscopy/OAD/master/ZEN-API/python_packages/zen_api-2026.7.1/dist/zen_api-2026.7.1-py3-none-any.whl" `
-  "https://raw.githubusercontent.com/zeiss-microscopy/OAD/master/ZEN-API/zen_api_utils/dist/zen_api_utils-0.1.0-py3-none-any.whl"
+  "https://github.com/zeiss-microscopy/OAD/releases/download/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" `
+  "https://github.com/zeiss-microscopy/OAD/releases/download/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
 ```
 
 The backtick is PowerShell's line-continuation character. Alternatively, pass
@@ -690,16 +690,16 @@ python -m build --sdist --wheel
 - Local release validation uses Pixi `default`: Python 3.12.14, napari 0.9.1,
   ome-writers 0.3.2, ngff-zarr 0.47.0, and zen-api 2026.11.1. This records one
   tested environment, not a claim that every gateway version is compatible.
-- CI checks Python 3.11-3.13 on Windows, Linux, and macOS. Pushes and pull
+- CI checks Python 3.12-3.14 on Windows, Linux, and macOS. Pushes and pull
   requests target `main`; version tags trigger publishing only after tests pass.
-- CI requires a repository secret named `ZEN_API_WHEEL_URL` pointing to an
-  authorized, reachable `zen_api` wheel. Test jobs fail explicitly without it;
-  forked pull requests cannot use repository secrets by default.
+- CI supplies the public OAD release wheel URLs for `zen_api==2026.7.1` and
+  `zen_api_utils==0.1.0` in the same pip command as the plugin installation.
+  No ZEN wheel URL secret is required, including for forked pull requests.
 
 ### Before tagging a release
 
-- Configure an authorized, reachable `ZEN_API_WHEEL_URL` secret and confirm the
-  full CI matrix passes. Local tests do not replace this check.
+- Confirm the pinned OAD release wheels remain reachable and the full CI
+  matrix passes. Local tests do not replace this check.
 - Choose the release version, update `pyproject.toml` and `CHANGELOG.md`, and
   verify the tag matches. No release version is selected by the cleanup.
 - Install the built wheel in a clean environment, initialize user configuration,
