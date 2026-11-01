@@ -114,6 +114,22 @@ def test_runtime_settings_preserve_process_environment(
     assert config_module.os.environ["ZEN_OUTPUT_DIR"] == "output"
 
 
+def test_experiment_ini_uses_gateway_resolution(
+    user_config_dir, tmp_path, monkeypatch
+) -> None:
+    """An empty INI gateway path follows ZEN_CONFIG_FILE, not site-packages."""
+    from napari_zen_streaming.ZEN_omezarr import load_experiment_config
+
+    gateway = tmp_path / "gateway.ini"
+    gateway.write_text("[api]\n", encoding="utf-8")
+    experiment = tmp_path / "experiment.ini"
+    experiment.write_text(
+        "[experiment]\nname = Exp\n[zenapi]\nconfig =\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("ZEN_CONFIG_FILE", str(gateway))
+    assert load_experiment_config(experiment).zenapi_config == str(gateway)
+
+
 def test_explicit_settings_path_is_checked(
     user_config_dir, tmp_path, monkeypatch
 ) -> None:

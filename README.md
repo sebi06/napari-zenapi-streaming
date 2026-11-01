@@ -89,7 +89,8 @@ src/napari_zen_streaming/
 experiment_streaming_config.ini  # Experiment config for OME-ZARR streaming
 
 docs/
-  *.mermaid, *.d2      # Flow and sequence diagrams
+  *.mmd               # Mermaid flowchart and sequence sources
+  *.png               # Rendered diagram preview
 ```
 
 ## Requirements
@@ -97,7 +98,8 @@ docs/
 - ZEISS ZEN Blue with ZEN API Gateway installed
 - A valid ZEN control token
 - Access to the ZEN API certificate (`ZenApiPersonalSigningRootCA.pem`)
-- Python 3.12-3.14 with a Qt backend supported by napari
+- Python 3.12-3.14 with Qt >=6.7; PyQt6 is used in CI. PyQt5 is not
+  compatible with napari 0.10 or newer.
 - Authorized, compatible `zen_api` and `zen_api_utils` wheels from
   [ZEISS OAD](https://github.com/zeiss-microscopy/OAD/tree/master/ZEN-API)
   (neither package is distributed on PyPI)
@@ -146,7 +148,7 @@ without confirming redistribution rights.
 For a published PyPI release:
 
 ```powershell
-python -m pip install napari-zenapi-streaming
+python -m pip install napari-zenapi-streaming "napari[pyqt6]" "PyQt6>=6.7,<6.10"
 ```
 
 From this checkout, install the plugin:
@@ -157,6 +159,12 @@ python -m pip install .
 
 For a downloaded release wheel, pass that wheel path instead of `.`. For
 development use `python -m pip install -e ".[dev,testing]"`.
+
+If multiple Qt bindings are installed, select PyQt6 before launching napari:
+
+```powershell
+$env:QT_API = "pyqt6"
+```
 
 The two ZEN wheel URLs or paths can also be supplied alongside the plugin in
 one `python -m pip install` command; installing them beforehand is not required
@@ -594,70 +602,58 @@ the preview option restores full-history live display.
 
 ### Display mode data flow
 
-```text
-ZEN Blue  ──gRPC──▶  StreamingPipeline  ──queue──▶  Processor
-                       (reader task)                   │
-                                                       ▼
-                                               add_frame() ──Qt signal──▶ napari viewer
-                                                       │
-                                                  sparse dict
-                                                       │
-                                              ┌────────▼────────────┐
-                                              │ perform_restructure │
-                                              │  7D → 5D STZYX     │
-                                              │ per-channel mosaic │
-                                              └─────────────────────┘
-```
+The global pixel stream feeds the pipeline reader, queue and processor.
+Qt signals update sparse frame storage and the latest 2D preview, or the
+optional 7D history layer. For napari-started runs, the experiment ID filter
+stays armed through the trailing-frame drain after status completion.
+Final restructure creates one STZYX scene-mosaic layer per channel, then
+clears the ID filter. Only plugin-owned layers are removed.
 
 ### OME-ZARR mode data flow
 
-```text
-ZEN Blue  ──gRPC──▶  stream_to_omezarr_with_config()
-                       (dedicated gRPC channel)
-                       │
-                       ├─ open one pixel stream per selected source channel
-                       ├─ optionally start experiment (auto-trigger)
-                       ├─ first frame: live T/C/Z/S/M status
-                       ├─ each frame: key = (T,S,M,C,Z)
-                       │    ├─ reject unexpected or duplicate key
-                       │    ├─ generic: buffer by raw linear slot
-                       │    └─ HCS: buffer M tiles for one T/S/C/Z plane
-                       │         ├─ merge tiles from XYZ and pixel scale
-                       │         └─ append one final scene plane
-                       ├─ complete unique key set or inactivity timeout
-                       ├─ drain pending frames and skip missing slots
-                       └─ generic only: finalize S/M tiles
-                           ├─ group by FramePosition.s
-                           ├─ identify tile by FramePosition.m
-                           ├─ place from streamed XYZ and pixel scale
-                           ├─ higher M wins overlaps
-                           └─ advertise one TCZYX image per scene
-```
+The plugin suspends the Display reader before the shared configured writer
+opens its dedicated channel and per-source-channel pixel streams. Experiment
+IDs are checked before decoding. Runtime GRAY8/GRAY16 metadata selects the
+dtype; positive live dimensions override XML fallback counts. Unique
+`(T,S,M,C,Z)` keys drive bounded buffering and ordered writes, either as raw
+generic tiles or directly merged HCS scene planes.
+
+After completion or inactivity, the writer drains pending slots, finalizes
+the layout and writes `acquisition_status.json`. Complete stores may receive
+pyramids and open in a viewer. Missing coordinates instead raise
+`IncompleteAcquisitionError`, preserve partial output and suppress pyramids
+and auto-opening. The plugin warns on failure and resumes the Display reader
+in `finally`; the configured CLI exits nonzero for incomplete acquisitions.
 
 Both flows use the same `monitor_all_experiments()` gRPC call.
 The OME-ZARR path creates its own channel so there is no contention.
 
 ## Diagrams and docs
 
-- Sequence diagram: `docs/napari_zenapi_streaming_sequence.mermaid`
-- Flowchart: `docs/napari_zenapi_streaming_flowchart.mermaid`
-- D2 variants: `docs/napari_zenapi_streaming_sequence.d2`,
-  `docs/napari_zenapi_streaming_flowchart.d2`
+- [Mermaid flowchart](docs/napari_zenapi_streaming_flowchart.mmd)
+- [Mermaid sequence diagram](docs/napari_zenapi_streaming_sequence.mmd)
+
+The diagrams focus on the three plugin workflows and their shared configured
+writer. The standalone buffered CLI mode is described separately above.
 
 Flowchart preview:
 
 ![Napari ZEN streaming flowchart](docs/napari_zenapi_streaming_flowchart.png)
 
-Editable source files:
+Render the Mermaid sources with Mermaid CLI, or preview `.mmd` files in the
+Mermaid VS Code extension. From the repository root:
 
-- Mermaid flowchart source: `docs/napari_zenapi_streaming_flowchart.mermaid`
-- Mermaid sequence source: `docs/napari_zenapi_streaming_sequence.mermaid`
+```bash
+npx --yes --package @mermaid-js/mermaid-cli -- mmdc -i docs/napari_zenapi_streaming_flowchart.mmd -o docs/napari_zenapi_streaming_flowchart.png
+```
 
 ## Troubleshooting
 
 - Missing `config.ini`: run `python -m napari_zen_streaming.ZEN_config --init`,
   populate the template, or set `ZEN_CONFIG_FILE` to an existing file.
 - TLS or certificate issues: verify `cert_file` path and that the file is readable.
+- **Qt5 incompatibility:** install `"PyQt6>=6.7,<6.10"` and select
+  `QT_API=pyqt6`. For pytest, also set `PYTEST_QT_API=pyqt6`.
 - No experiments in dropdown: confirm ZEN API Gateway is running and token is valid.
 - Viewer not updating: check `zen_streaming.log` in the user log directory described above for pipeline errors.
 - Restructure too early/late for ZEN-started runs: adjust `ZEN_RESTRUCTURE_TIMEOUT`.
@@ -687,14 +683,17 @@ python -m build --sdist --wheel
 - Format settings are defined in `pyproject.toml` (Black, line length 79).
 - Tests mock the gateway and cover routing, partial acquisitions, mosaics,
   metadata refresh, dtype handling, progress, configuration, and layer ownership.
-- Local release validation uses Pixi `default`: Python 3.12.14, napari 0.9.1,
-  ome-writers 0.3.2, ngff-zarr 0.47.0, and zen-api 2026.11.1. This records one
-  tested environment, not a claim that every gateway version is compatible.
+- A clean Windows environment passed the full test suite with Python 3.12.15,
+  napari 0.10.0, PyQt6 6.9.1, ome-writers 0.3.2, ngff-zarr 0.51.0,
+  zen-api 2026.7.1, and zen-api-utils 0.1.0. This records one tested
+  environment, not a claim that every gateway version is compatible.
 - CI checks Python 3.12-3.14 on Windows, Linux, and macOS. Pushes and pull
   requests target `main`; version tags trigger publishing only after tests pass.
 - CI supplies the public OAD release wheel URLs for `zen_api==2026.7.1` and
   `zen_api_utils==0.1.0` in the same pip command as the plugin installation.
   No ZEN wheel URL secret is required, including for forked pull requests.
+- The testing extra installs `PyQt6>=6.7,<6.10`. Both CI workflows set
+  `QT_API=pyqt6` and `PYTEST_QT_API=pyqt6` to avoid selecting another binding.
 
 ### Before tagging a release
 

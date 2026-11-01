@@ -42,6 +42,17 @@ def default_gateway_config() -> Path:
     return user_config
 
 
+def resolve_gateway_config() -> Path:
+    """Return ``ZEN_CONFIG_FILE`` when set, else the default gateway config."""
+    config_file_raw = os.getenv("ZEN_CONFIG_FILE")
+    if not config_file_raw:
+        return default_gateway_config()
+    config_file = Path(config_file_raw).expanduser().resolve()
+    if config_file_raw == "config.ini" and not config_file.is_file():
+        return default_gateway_config()
+    return config_file
+
+
 def load_runtime_settings() -> Path | None:
     """Load optional user settings without replacing process environment.
 
@@ -173,14 +184,7 @@ class ZENConfig:
             ValueError: If environment variables contain invalid values
         """
         try:
-            config_file_raw = os.getenv("ZEN_CONFIG_FILE")
-            config_file = (
-                Path(config_file_raw).expanduser().resolve()
-                if config_file_raw
-                else default_gateway_config()
-            )
-            if config_file_raw == "config.ini" and not config_file.is_file():
-                config_file = default_gateway_config()
+            config_file = resolve_gateway_config()
             return cls(
                 exp_name=os.getenv("ZEN_EXP_NAME", "ZEN_API_overview"),
                 exp_started_by_ui=os.getenv("ZEN_UI_START", "true").lower()

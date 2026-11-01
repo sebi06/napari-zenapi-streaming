@@ -1,0 +1,66 @@
+flowchart TD
+    START[Load user config, dotenv settings and logging] --> CONNECT[Connect to ZEN and create selector UI]
+    CONNECT --> MODE{Select stream mode}
+    MODE -->|Display: watch ZEN experiment| WATCH[Wait for ZEN-started frames; unknown frame count]
+    MODE -->|Display: start selected experiment| PREPARE[Reload XML metadata and prepare selected experiment]
+    PREPARE --> ARM[Arm experiment ID filter before starting acquisition]
+    ARM --> TRIGGER[Start loaded experiment and monitor status]
+    WATCH --> DISPLAY
+    TRIGGER --> DISPLAY
+
+    subgraph DISPLAY_PATH[Display pipeline]
+        DISPLAY[Receive global frames; reject nonmatching armed IDs] --> FIRST{First frame of acquisition?}
+        FIRST -->|Yes| RESET[Clear only plugin-owned layers and reset frame storage]
+        FIRST -->|No| STORE
+        RESET --> STORE[Store sparse frame key S,T,M,Z,C]
+        STORE --> PREVIEW[Default: latest 2D YX preview; optional 7D history]
+        PREVIEW --> COMPLETION{Completion trigger?}
+        COMPLETION -->|Not yet| DISPLAY
+        COMPLETION -->|ZEN status finished| DRAIN[Retain ID filter; wait for expected unique frames or inactivity]
+        COMPLETION -->|Watch inactivity or Stop| RESTRUCTURE
+        DRAIN --> RESTRUCTURE[Remove preview; merge M tiles into one STZYX mosaic per channel]
+        RESTRUCTURE --> RELEASE[Clear experiment ID filter after final restructure]
+    end
+
+    CHANNELS[Display channel labels: All or 1-16 for watch; setup channels for selected start] --> RESTART[Convert to zero-based index and restart pipeline reader]
+    RESTART -.-> DISPLAY
+
+    MODE -->|OME-ZARR only| CONFIG[Build config from UI; reload XML dimensions and wells]
+    subgraph WRITER_PATH[Configured writer shared by plugin and CLI]
+        CONFIG --> SUSPEND[Suspend display reader before opening dedicated writer channel]
+        SUSPEND --> STREAMS[Open one pixel stream per selected source channel]
+        STREAMS --> AUTO{Auto-trigger enabled?}
+        AUTO -->|Yes| API_START[Prepare and start experiment; retain returned ID]
+        AUTO -->|No| MANUAL[Arm writer; pin to first received experiment ID]
+        API_START --> INITIALIZE
+        MANUAL --> INITIALIZE[First matching frame: validate GRAY8 or GRAY16 payload and live dimensions]
+        INITIALIZE --> EXPECTED[Use positive live counts with XML fallback; build expected T,S,M,C,Z map]
+        EXPECTED --> READ[Read frame; reject missing or unrelated experiment IDs before decoding]
+        READ --> VALID{New expected coordinate?}
+        VALID -->|No: duplicate or unexpected| READ
+        VALID -->|Yes| APPEND[Buffer bounded out-of-order frames; append raw slots or merged HCS scene planes]
+        APPEND --> ALL{All expected coordinates received?}
+        ALL -->|No| IDLE{Inactivity timeout?}
+        IDLE -->|No| READ
+        ALL -->|Yes| FINALIZE
+        IDLE -->|Yes| FINALIZE[Drain pending frames; skip missing slots and close writer]
+        FINALIZE --> LAYOUT[Finalize HCS rows or assemble generic TCZYX scene mosaics; higher M wins overlaps]
+        LAYOUT --> REPORT[Write acquisition_status.json with received counts and missing coordinates]
+        REPORT --> COMPLETE{Acquisition complete?}
+        COMPLETE -->|Yes| SUCCESS[Generate requested pyramids; return path and open output]
+        COMPLETE -->|No| PARTIAL[Retain partial store; raise IncompleteAcquisitionError; no pyramid or auto-open]
+        PARTIAL --> WARNING[Plugin warning or CLI nonzero exit]
+        SUCCESS --> RESUME[Plugin: resume display reader in finally]
+        WARNING --> RESUME
+    end
+
+    RELEASE --> READY[Restore idle controls; ready for next acquisition]
+    RESUME --> READY
+    READY --> MODE
+
+    classDef display fill:#e1f5ff,stroke:#36718c
+    classDef writer fill:#e7f2e7,stroke:#39713f
+    classDef warning fill:#fff0d6,stroke:#9b6a14
+    class DISPLAY,STORE,PREVIEW,DRAIN,RESTRUCTURE display
+    class CONFIG,STREAMS,READ,APPEND,FINALIZE,LAYOUT,SUCCESS writer
+    class PARTIAL,WARNING warning

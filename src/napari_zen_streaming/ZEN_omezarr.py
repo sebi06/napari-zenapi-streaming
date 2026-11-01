@@ -38,6 +38,7 @@ from zen_api.acquisition.v1beta import (
 )
 
 from napari_zen_streaming.misc import initialize_zenapi
+from napari_zen_streaming.ZEN_config import resolve_gateway_config
 
 logger = logging.getLogger(__name__)
 
@@ -480,10 +481,9 @@ def load_experiment_config(config_path: str | Path) -> ExperimentConfig:
     cfg = configparser.ConfigParser()
     cfg.read(config_path)
 
-    # zenapi config: if empty, fall back to config.ini next to the script
     zenapi_config = cfg.get("zenapi", "config", fallback="").strip()
     if not zenapi_config:
-        zenapi_config = str(Path(__file__).parent / "config.ini")
+        zenapi_config = str(resolve_gateway_config())
 
     # channel index: empty string means None (all channels)
     ch_idx_raw = cfg.get("stream", "channel_index", fallback="").strip()

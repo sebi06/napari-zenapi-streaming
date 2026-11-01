@@ -86,7 +86,10 @@ from napari_zen_streaming._scene_geometry import (
     calculate_scene_geometry,
 )
 from napari_zen_streaming.misc import initialize_zenapi
-from napari_zen_streaming.ZEN_config import load_runtime_settings
+from napari_zen_streaming.ZEN_config import (
+    load_runtime_settings,
+    resolve_gateway_config,
+)
 from napari_zen_streaming.ZEN_omezarr import (
     ExperimentConfig,
     load_experiment_acquisition,
@@ -2074,7 +2077,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help=(
-            "Path to an experiment config INI file (see experiment_config.ini). "
+            "Path to an experiment config INI file "
+            "(see experiment_streaming_config.ini). "
             "When provided, dimensions are known upfront and frames are written "
             "on-the-fly. Most other CLI flags are ignored except "
             "--start-experiment / --no-start-experiment which override the INI."
@@ -2083,8 +2087,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--zenapi-config",
         type=str,
-        default=str(Path(__file__).parent / "config.ini"),
-        help="Path to the ZEN-API configuration file.",
+        default=str(resolve_gateway_config()),
+        help="Path to the ZEN-API gateway configuration file.",
     )
     parser.add_argument(
         "--experiment",

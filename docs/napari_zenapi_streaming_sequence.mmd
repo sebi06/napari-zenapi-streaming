@@ -1,0 +1,93 @@
+sequenceDiagram
+    participant User
+    participant UI as StreamingViewer UI
+    participant Pipeline as Display Pipeline
+    participant ZEN as ZEN Gateway
+    participant Viewer as Napari Viewer
+    participant Writer as Configured OME-Zarr Writer
+    participant Store as Output Store
+
+    UI->>ZEN: Connect and list experiments without starting acquisition
+    UI->>Pipeline: Monitor global pixel stream
+
+    alt Display: start selected experiment
+        User->>UI: Select setup and click Start
+        UI->>ZEN: Reload XML metadata and prepare experiment
+        ZEN-->>UI: Dimensions and experiment ID
+        UI->>Pipeline: Arm experiment ID filter
+        UI->>ZEN: Start loaded experiment
+        UI->>ZEN: Subscribe to status changes
+    else Display: watch ZEN experiment
+        User->>ZEN: Start experiment independently
+        Note over UI,Pipeline: No known ID or expected frame count, channel labels All or 1-16
+    end
+
+    opt Either Display mode
+        loop Accepted frames
+            ZEN-->>Pipeline: FrameData with live S,T,M,Z,C
+            Pipeline->>Pipeline: Reject unrelated IDs when filter is armed
+            Pipeline->>Viewer: Process frame and emit Qt update
+            opt First frame of acquisition
+                Viewer->>Viewer: Remove only plugin-owned layers and reset frame storage
+            end
+            Viewer->>Viewer: Store sparse key S,T,M,Z,C
+            Viewer->>Viewer: Update latest 2D preview or optional 7D history
+        end
+        alt Napari-started experiment finishes
+            ZEN-->>UI: Status reports no longer running
+            UI->>UI: Wait for expected unique frames or pixel inactivity
+            Note over Pipeline,Viewer: Keep global stream and ID filter active during trailing-frame drain
+        else ZEN-started experiment finishes or user stops
+            UI->>UI: Detect inactivity timeout or handle Stop
+        end
+        UI->>Viewer: Restructure available frames into STZYX channel mosaics
+            Viewer->>Viewer: Place tiles from streamed coordinates, higher M wins overlaps
+        UI->>Pipeline: Clear experiment ID filter after final restructure
+        UI->>UI: Close progress and restore idle controls
+        opt Change Display channel filter
+            User->>UI: Select 1-based label or All
+            UI->>Pipeline: Restart reader with zero-based channel index
+        end
+    end
+
+    opt OME-ZARR only instead of Display
+        User->>UI: Select setup, writer options and auto-trigger setting, then click Start
+        UI->>ZEN: Reload XML dimensions, Z spacing and wells
+        UI->>Pipeline: Suspend and close display pixel subscription
+        UI->>Writer: Run shared configured writer
+        Writer->>ZEN: Open dedicated channel and one pixel stream per source channel
+        alt Auto-trigger enabled
+            Writer->>ZEN: Prepare and start selected experiment
+            ZEN-->>Writer: Target experiment ID
+        else Writer armed for manual start
+            User->>ZEN: Start intended experiment
+            ZEN-->>Writer: First frame pins target experiment ID
+        end
+        Writer->>Writer: Reject unrelated or missing IDs before decoding
+        Writer->>Writer: Validate runtime GRAY8 or GRAY16 payload and native YX shape
+        Writer->>ZEN: Query live T,C,Z,S,M counts
+        ZEN-->>Writer: Positive live counts, XML counts are fallback
+        Writer->>Writer: Build expected T,S,M,C,Z map
+        loop Until all expected coordinates arrive or inactivity timeout
+            ZEN-->>Writer: FrameData
+            Writer->>Writer: Filter IDs, skip duplicate or unexpected coordinates
+            Writer->>Writer: Buffer out-of-order frames within configured bound
+            Writer->>Store: Append consecutive raw slots or merged HCS scene planes
+        end
+        Writer->>Store: Drain pending frames, skip missing slots and close writer
+        Writer->>Store: Finalize HCS rows or assemble generic TCZYX scene mosaics
+        Writer->>Store: Write acquisition_status.json
+        alt Acquisition complete
+            Writer->>Store: Generate requested pyramids
+            Writer-->>UI: Return output path
+            UI->>Viewer: Open output with napari-ome-zarr
+        else Missing expected coordinates
+            Writer-->>UI: Raise IncompleteAcquisitionError with partial path
+            UI->>User: Show acquisition warning
+            Note over Writer,Store: Retain partial store without pyramids or auto-open, CLI exits nonzero
+        end
+        UI->>Pipeline: Resume display reader in finally
+        UI->>UI: Close progress and restore idle controls
+    end
+
+    Note over User,UI: Ready for next acquisition, unrelated layers and docks are preserved
