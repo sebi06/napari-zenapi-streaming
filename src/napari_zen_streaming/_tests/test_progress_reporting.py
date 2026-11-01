@@ -128,16 +128,40 @@ def test_targeted_display_keeps_only_one_streaming_bar(monkeypatch) -> None:
     orphan = _Progress(total=81)
     orphan.set_description("Streaming frames")
     viewer = object.__new__(StreamingViewer)
-    viewer.mode_combo = SimpleNamespace(currentIndex=lambda: 1)
+    viewer.mode_combo = SimpleNamespace(
+        currentIndex=lambda: 1, setEnabled=lambda enabled: None
+    )
     viewer._mode_index = 1
     viewer.is_streaming = True
     viewer._napari_progress = None
     viewer._napari_progress_bars = set()
     viewer._progress_phase = "idle"
     viewer._standalone_zarr_active = False
-    viewer.start_button = SimpleNamespace(isEnabled=lambda: True)
+    button_state = {"enabled": True, "text": "Start Selected Experiment"}
+    label_changes = []
+
+    def set_text(text: str) -> None:
+        button_state["text"] = text
+        label_changes.append(text)
+
+    viewer.start_button = SimpleNamespace(
+        isEnabled=lambda: button_state["enabled"],
+        setEnabled=lambda enabled: button_state.update(enabled=enabled),
+        text=lambda: button_state["text"],
+        setText=set_text,
+    )
+    viewer._set_start_button_enabled(False)
 
     viewer._update_progress_slot(2, 81)
+    assert button_state["text"] == "Experiment & Stream Running"
+    for current in (3, 4, 5):
+        viewer._set_start_button_enabled(False)
+        viewer._update_progress_slot(current, 81)
+        assert button_state["text"] == "Experiment & Stream Running"
+    assert label_changes == [
+        "Experiment Running...",
+        "Experiment & Stream Running",
+    ]
     assert orphan.closed
     assert len(_Progress._all_instances) == 1
     first_bar = next(iter(_Progress._all_instances))

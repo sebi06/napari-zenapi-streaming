@@ -285,6 +285,60 @@ Leave `ZEN_LOG_DIR=` empty or remove the line to use the platform-specific
 default documented in [Logging](#logging). Restart napari after changing the
 file because logging is configured when the plugin widget opens.
 
+### Default OME-ZARR output directory
+
+Set the plugin's initial output folder with `ZEN_OUTPUT_DIR` in the user
+settings file. On Windows this is
+`%APPDATA%\napari-zenapi-streaming\.env`. The settings directory may not exist
+yet; create it and open the file from PowerShell:
+
+```powershell
+$settingsDir = Join-Path $env:APPDATA "napari-zenapi-streaming"
+New-Item -ItemType Directory -Force $settingsDir | Out-Null
+notepad (Join-Path $settingsDir ".env")
+```
+
+If Notepad asks to create the file, accept. Add or update the following entry
+without removing any existing settings, then save it with the exact filename
+`.env`, not `.env.txt`:
+
+```dotenv
+ZEN_OUTPUT_DIR=F:\Zen_Output
+```
+
+Creating this `.env` does not require creating a user `config.ini`. If your
+gateway configuration already works, leave it in place. Do not create an empty
+`config.ini` in the user settings directory: it takes priority over working
+directory and checkout fallbacks. For a new gateway configuration, use the
+[configuration initializer](#1-configini-required) and populate its template
+before connecting.
+
+The user `.env` replaces the editable checkout's fallback `.env`; the files
+are not merged. Include any checkout settings you still need, such as
+`ZEN_CONFIG_FILE`. Existing process environment variables override `.env`
+values. Restart napari after changing the file.
+
+Alternatively, set the output default for one PowerShell session before
+launching napari:
+
+```powershell
+$env:ZEN_OUTPUT_DIR = "F:\Zen_Output"
+napari
+```
+
+The folder field in the plugin overrides this initial value. Without
+`ZEN_OUTPUT_DIR`, it defaults to your Documents directory. The standalone
+experiment INI's `[output] directory` is separate and does not configure the
+plugin.
+
+Before configured streaming starts an experiment or opens pixel streams, the
+writer creates the output folder if needed and probes temporary-directory and
+file creation, then removes the probe. It also rejects the Windows read-only
+attribute because the native writer rejects such parent folders even when
+Python can write to them. Windows Documents may have that attribute; choose a
+writable subfolder or another output directory instead. This preflight does
+not guarantee sufficient disk space or that access will remain available.
+
 ## Running
 
 ### Option A: Run as a napari plugin
@@ -528,6 +582,34 @@ index, tile identity is always the streamed M index, and spatial placement is
 always based on streamed physical coordinates rather than an assumed grid.
 
 ### Standalone CLI
+
+For a Python API example, see
+[examples/stream_to_omezarr.py](examples/stream_to_omezarr.py). It loads the
+experiment INI, exports acquisition metadata, and awaits
+`stream_to_omezarr_with_config()`. Use the same environment and gateway
+configuration described above. From the repository root:
+
+```powershell
+python examples/stream_to_omezarr.py
+```
+
+With no argument, it uses `experiment_streaming_config.ini` from the repository
+root, located relative to the script rather than the working directory. Pass
+another INI path as the positional argument to override this default.
+
+Use `--experiment NAME` to override the INI's experiment name for both metadata
+export and streaming. It does not start acquisition unless you also pass
+`--start-experiment`:
+
+```powershell
+python examples/stream_to_omezarr.py --experiment "MyExperiment" --start-experiment
+```
+
+Edit the INI's experiment name and output directory before running. By default,
+the example waits for you to start the acquisition in ZEN Blue. Add
+`--start-experiment` to trigger it via the API. The example disables CZI and
+OME-ZARR overwriting, honors the INI's pyramid settings, and lets errors
+propagate so incomplete acquisitions exit nonzero and retain partial output.
 
 `ZEN_stream2omezarr.py` can be run directly without napari:
 

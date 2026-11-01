@@ -5,6 +5,7 @@ dist/
 .coverage*
 coverage.xml
 public/
+/output/
 archive/
 *.log
 **/__pycache__/

@@ -465,8 +465,27 @@ class StreamingViewer:
             else str(Path.home() / "Documents")
         )
         self.omezarr_dir_edit.setPlaceholderText("Output directory")
+        self.omezarr_dir_edit.setToolTip(
+            "OME-ZARR output folder for this run.\n\n"
+            "To change the startup default, set ZEN_OUTPUT_DIR in your "
+            "process environment or user .env file. On Windows:\n"
+            "%APPDATA%\\napari-zenapi-streaming\\.env\n"
+            "Create the settings directory and .env if missing, then "
+            "restart napari. No new config.ini is required.\n\n"
+            "Without ZEN_OUTPUT_DIR, the default is Documents. "
+            "This field overrides the default; the standalone experiment "
+            "INI does not configure this field.\n\n"
+            "Before acquisition starts, the writer probes folder access "
+            "and checks the Windows read-only attribute. Documents may "
+            "be rejected; select a writable subfolder or another location."
+        )
         browse_button = QPushButton("...")
         browse_button.setFixedWidth(30)
+        browse_button.setToolTip(
+            "Choose the OME-ZARR output folder for this run. "
+            "Hover over the folder field for default-folder settings "
+            "and access requirements."
+        )
         browse_button.clicked.connect(self._browse_omezarr_dir)
         dir_layout.addWidget(self.omezarr_dir_edit)
         dir_layout.addWidget(browse_button)
@@ -1710,12 +1729,13 @@ class StreamingViewer:
             enabled: True to enable (idle state), False to disable
                 (active / armed state).
         """
+        was_enabled = self.start_button.isEnabled()
         self.start_button.setEnabled(enabled)
         self.mode_combo.setEnabled(enabled)
         if enabled:
             # Restore the correct idle label for the current mode.
             self._sync_start_button_label()
-        else:
+        elif was_enabled:
             # OME-ZARR mode without auto-trigger: writer is armed but
             # no experiment is running yet in ZEN Blue.
             if self.omezarr_enabled and not self.chk_auto_trigger.isChecked():

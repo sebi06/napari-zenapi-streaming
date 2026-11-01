@@ -44,7 +44,9 @@ import contextlib
 import itertools
 import json
 import logging
+import stat
 import sys
+import tempfile
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from datetime import datetime
 from pathlib import Path
@@ -54,8 +56,8 @@ import numpy as np
 
 # ome-writers
 import zarr
-from grpclib.const import Cardinality
-from grpclib.exceptions import ProtocolError, StreamTerminatedError
+from grpclib.const import Cardinality, Status
+from grpclib.exceptions import GRPCError, ProtocolError, StreamTerminatedError
 
 # napari.utils.progress subclasses tqdm: shows in the napari activity dock
 # when a viewer is open; falls back to a tqdm terminal bar in CLI mode.
@@ -1306,6 +1308,27 @@ async def _stream_to_omezarr_connected(
     return zarr_path
 
 
+def _validate_output_directory(output_dir: Path) -> None:
+    """Probe output access, including the native writer's Windows check."""
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        attributes = getattr(output_dir.stat(), "st_file_attributes", 0)
+        if attributes & stat.FILE_ATTRIBUTE_READONLY:
+            raise PermissionError(
+                "the Windows read-only attribute is set; the native Zarr "
+                "writer rejects this folder even if Python can write to it"
+            )
+        with tempfile.TemporaryDirectory(
+            prefix=".zen-write-check-", dir=output_dir
+        ) as probe_dir:
+            (Path(probe_dir) / "probe").write_bytes(b"ZEN output write check")
+    except OSError as exc:
+        raise OSError(
+            f"Cannot use OME-ZARR output directory '{output_dir}': {exc}. "
+            "Choose a writable output folder before starting acquisition."
+        ) from exc
+
+
 async def stream_to_omezarr_with_config(
     ecfg: ExperimentConfig,
     inactivity_timeout: float = _STATUS_POLL_TIMEOUT,
@@ -1335,9 +1358,11 @@ async def stream_to_omezarr_with_config(
         Path to the created OME-ZARR directory.
 
     Raises:
+        OSError: The output directory fails the pre-acquisition access check.
         IncompleteAcquisitionError: Expected frames are missing. Finalized
             partial output and its acquisition status report are retained.
     """
+    _validate_output_directory(Path(ecfg.output_dir))
     channel, metadata = initialize_zenapi(ecfg.zenapi_config)
     try:
         async with contextlib.AsyncExitStack() as resources:
@@ -1752,11 +1777,21 @@ async def _stream_to_omezarr_with_config_connected(
                     f"images={status.images_count}"
                 )
             except Exception as exc:
-                logger.warning(
-                    "Could not query live dimensions; using config values: %s",
-                    exc,
-                    exc_info=True,
-                )
+                if (
+                    isinstance(exc, GRPCError)
+                    and exc.status == Status.FAILED_PRECONDITION
+                    and exc.message == "No experiment is running"
+                ):
+                    logger.info(
+                        "ZEN reports no running experiment; continuing pixel "
+                        "streaming with exported/configured dimensions."
+                    )
+                else:
+                    logger.warning(
+                        "Could not query live dimensions; using config values: %s",
+                        exc,
+                        exc_info=True,
+                    )
 
             if ecfg.channel_index is not None:
                 num_c = 1

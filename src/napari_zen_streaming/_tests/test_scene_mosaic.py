@@ -3,12 +3,15 @@
 import asyncio
 import contextlib
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import zarr
+from grpclib.const import Status
+from grpclib.exceptions import GRPCError
 
 import napari_zen_streaming.ZEN_stream2omezarr as stream_module
 from napari_zen_streaming._scene_geometry import (
@@ -71,6 +74,57 @@ def test_well_layout_can_be_written_as_hcs() -> None:
 
     assert plate is not None
     assert len(positions) == 2
+
+
+def test_output_directory_probe_cleans_up(tmp_path: Path) -> None:
+    """A writable output folder is created and retains no probe files."""
+    output = tmp_path / "new-output"
+    stream_module._validate_output_directory(output)
+    assert output.is_dir()
+    assert not list(output.iterdir())
+
+
+@pytest.mark.parametrize("failure", ["readonly", "write-denied"])
+def test_output_access_failure_prevents_connection(
+    tmp_path: Path, monkeypatch, failure: str
+) -> None:
+    """Invalid output is rejected before connecting or starting ZEN."""
+    config = _experiment_config(use_hcs_layout=True)
+    config.output_dir = str(tmp_path)
+    config.start_from_script = True
+
+    def unexpected_connection(*_args):
+        pytest.fail("Output must be checked before connecting to ZEN")
+
+    monkeypatch.setattr(
+        stream_module, "initialize_zenapi", unexpected_connection
+    )
+    if failure == "readonly":
+        original_stat = Path.stat
+
+        def readonly_stat(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            if path == tmp_path:
+                return SimpleNamespace(
+                    st_mode=info.st_mode,
+                    st_file_attributes=stream_module.stat.FILE_ATTRIBUTE_READONLY,
+                )
+            return info
+
+        monkeypatch.setattr(Path, "stat", readonly_stat)
+        message = "read-only attribute"
+    else:
+
+        def denied_probe(*_args, **_kwargs):
+            raise PermissionError("write access denied")
+
+        monkeypatch.setattr(
+            stream_module.tempfile, "TemporaryDirectory", denied_probe
+        )
+        message = "write access denied"
+
+    with pytest.raises(OSError, match=message):
+        asyncio.run(stream_module.stream_to_omezarr_with_config(config))
 
 
 def test_channel_subscriptions_can_start_before_server_headers() -> None:
@@ -179,13 +233,17 @@ def test_assemble_scene_plane_merges_tiles_by_coordinates() -> None:
 
 @pytest.mark.parametrize("start_from_script", [False, True])
 @pytest.mark.parametrize("incomplete", [False, True])
+@pytest.mark.parametrize("live_status", ["running", "finished", "unavailable"])
 def test_configured_hcs_stream_writes_merged_scene_directly(
     tmp_path: Path,
     monkeypatch,
+    caplog,
     start_from_script: bool,
     incomplete: bool,
+    live_status: str,
 ) -> None:
     """HCS streaming writes one merged plane without a tile-store rewrite."""
+    caplog.set_level(logging.INFO, logger=stream_module.__name__)
     frames = []
     for tile_index, value, center_x in ((0, 2, 0.5), (1, 4, 2.5)):
         image = np.full((2, 2), value, dtype=np.uint16)
@@ -230,6 +288,12 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     class _ExperimentService:
         async def get_status(self, _request):
             """Return dimensions matching the fake stream."""
+            if live_status == "finished":
+                raise GRPCError(
+                    Status.FAILED_PRECONDITION, "No experiment is running"
+                )
+            if live_status == "unavailable":
+                raise GRPCError(Status.UNAVAILABLE, "Gateway unavailable")
             return SimpleNamespace(
                 status=SimpleNamespace(
                     time_points_count=2 if incomplete else 1,
@@ -373,6 +437,22 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         assert error.value.expected_frames == 4
     else:
         zarr_path = asyncio.run(acquisition)
+
+    fallback_records = [
+        record
+        for record in caplog.records
+        if "continuing pixel streaming" in record.getMessage()
+        or "Could not query live dimensions" in record.getMessage()
+    ]
+    if live_status == "running":
+        assert not fallback_records
+    else:
+        assert len(fallback_records) == 1
+        record = fallback_records[0]
+        assert record.levelno == (
+            logging.INFO if live_status == "finished" else logging.WARNING
+        )
+        assert (record.exc_info is None) == (live_status == "finished")
 
     status = json.loads((zarr_path / "acquisition_status.json").read_text())
     assert status["complete"] is not incomplete

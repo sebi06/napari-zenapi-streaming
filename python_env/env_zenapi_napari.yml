@@ -19,7 +19,7 @@ dependencies:
   - pip
   - plotly
   - pooch
-  - pyqt=5
+  - pyqt>=6.7,<6.10
   - pytest>=6.0
   - pytest-cov
   - pytest-asyncio
@@ -42,7 +42,7 @@ dependencies:
   - xarray
   - xarray[complete]
   - xmltodict
-  - zarr
+  - zarr>=3
 
   - pip:
       - aicspylibczi>=3.3.1
@@ -67,6 +67,10 @@ dependencies:
 
     # Install an authorized, compatible zen_api wheel separately after activation.
     # See README.md; the wheel is not redistributed by this project.
+
+variables:
+  QT_API: pyqt6
+  PYTEST_QT_API: pyqt6
 
 # Create an environment - use conda or mamba
 # conda env create --file env_zenapi_napari.yml
