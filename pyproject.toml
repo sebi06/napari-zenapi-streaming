@@ -44,7 +44,6 @@ dev = [
     "pytest>=6.0",
     "pytest-qt",
     "pytest-asyncio",
-    "black",
     "ruff",
     "mypy",
 ]
@@ -83,10 +82,6 @@ napari_zen_streaming = ["napari.yaml"]
 [tool.setuptools.exclude-package-data]
 napari_zen_streaming = [".env"]
 
-[tool.black]
-line-length = 79
-target-version = ['py312']
-
 [tool.ruff]
 line-length = 79
 target-version = "py312"
@@ -104,11 +99,11 @@ lint.select = [
     "SIM", # flake8-simplify
 ]
 lint.ignore = [
-    "E203", # Black-compatible formatting
+    "E203", # Conflicts with ruff format
     "G004", # logging is using f-string
     "G201", # use .exception(...) instead of .error(...) in except block
-    "E501", # line too long. let black handle this
-    "ISC001", # Black may place implicitly concatenated strings on one line.
+    "E501", # line too long. let ruff format handle this
+    "ISC001", # Conflicts with ruff format
     "UP006", "UP007", # Preserve runtime annotations consumed by Qt/magicgui.
     "SIM117", # Keep nested context managers explicit where clearer.
 ]

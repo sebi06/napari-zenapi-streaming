@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 def default_config_dir() -> Path:
     """Return the platform-specific directory for user-owned configuration."""
     if sys.platform == "win32":
-        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+        base = Path(
+            os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming"
+        )
     else:
         base = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
     return base / "napari-zenapi-streaming"
@@ -59,7 +61,11 @@ def load_runtime_settings() -> Path | None:
     retained only for editable source checkouts.
     """
     explicit = os.getenv("ZEN_ENV_FILE")
-    settings_file = Path(explicit).expanduser() if explicit else default_config_dir() / ".env"
+    settings_file = (
+        Path(explicit).expanduser()
+        if explicit
+        else default_config_dir() / ".env"
+    )
     if explicit and not settings_file.is_file():
         raise FileNotFoundError(f"Settings file not found: {settings_file}")
     if not explicit and not settings_file.is_file():
@@ -181,10 +187,15 @@ class ZENConfig:
             config_file = resolve_gateway_config()
             return cls(
                 exp_name=os.getenv("ZEN_EXP_NAME", "ZEN_API_overview"),
-                exp_started_by_ui=os.getenv("ZEN_UI_START", "true").lower() == "true",
+                exp_started_by_ui=os.getenv("ZEN_UI_START", "true").lower()
+                == "true",
                 config_file=config_file,
-                channel_index=(int(ci) if (ci := os.getenv("ZEN_CHANNEL_INDEX")) else None),
-                restructure_timeout=float(os.getenv("ZEN_RESTRUCTURE_TIMEOUT", "10.0")),
+                channel_index=(
+                    int(ci) if (ci := os.getenv("ZEN_CHANNEL_INDEX")) else None
+                ),
+                restructure_timeout=float(
+                    os.getenv("ZEN_RESTRUCTURE_TIMEOUT", "10.0")
+                ),
                 show_only_last_frame_during_live=os.getenv(
                     "ZEN_SHOW_ONLY_LAST_FRAME_DURING_LIVE",
                     "true",
@@ -232,7 +243,9 @@ class ImageMetadata:
 
 def main() -> None:
     """Initialize configuration for an installed plugin or standalone app."""
-    parser = argparse.ArgumentParser(description="Create a user-owned ZEN API configuration")
+    parser = argparse.ArgumentParser(
+        description="Create a user-owned ZEN API configuration"
+    )
     parser.add_argument(
         "--init",
         action="store_true",
@@ -243,8 +256,12 @@ def main() -> None:
     try:
         config_file = initialize_user_config()
     except FileExistsError:
-        parser.exit(message=f"Configuration already exists: {default_config_dir() / 'config.ini'}\n")
-    parser.exit(message=f"Created {config_file}. Set your control token and certificate path before connecting.\n")
+        parser.exit(
+            message=f"Configuration already exists: {default_config_dir() / 'config.ini'}\n"
+        )
+    parser.exit(
+        message=f"Created {config_file}. Set your control token and certificate path before connecting.\n"
+    )
 
 
 if __name__ == "__main__":

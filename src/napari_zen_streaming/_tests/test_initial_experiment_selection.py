@@ -340,8 +340,8 @@ def test_start_refreshes_selected_experiment_before_acquisition(
         resume_reader=AsyncMock(),
     )
     viewer.app = SimpleNamespace(pipeline=pipeline)
-    viewer._create_plugin_omezarr_config = (
-        lambda name: create_plugin_experiment_config(
+    viewer._create_plugin_omezarr_config = lambda name: (
+        create_plugin_experiment_config(
             experiment_name=name,
             output_dir=".",
             dtype="Gray16",

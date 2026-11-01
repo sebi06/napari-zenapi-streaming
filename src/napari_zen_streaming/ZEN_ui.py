@@ -1421,13 +1421,11 @@ class StreamingViewer:
                         progress_callback=progress_emitter,
                         on_experiment_started=record_experiment_id,
                     )
-                    logger.info(
-                        f"OME-ZARR standalone complete: " f"{zarr_path}"
-                    )
+                    logger.info(f"OME-ZARR standalone complete: {zarr_path}")
                     self.signals.open_omezarr.emit(str(zarr_path))
                 except Exception as exc:
                     logger.error(
-                        "OME-ZARR standalone failed: " f"{exc}",
+                        f"OME-ZARR standalone failed: {exc}",
                         exc_info=True,
                     )
                     self.signals.acquisition_warning.emit(str(exc))
@@ -1465,9 +1463,9 @@ class StreamingViewer:
                 logger.debug(f"Starting experiment from UI: {exp_name}")
 
                 pipeline = getattr(self.app, "pipeline", None)
-                assert (
-                    self.connection is not None
-                ), "connection must be set before starting an experiment"
+                assert self.connection is not None, (
+                    "connection must be set before starting an experiment"
+                )
                 if pipeline is None:
                     raise RuntimeError("Streaming pipeline is not available")
 
@@ -1553,9 +1551,9 @@ class StreamingViewer:
                     )
                     self.signals.show_start_button.emit(True)
                     return
-                assert (
-                    self.connection is not None
-                ), "connection must be set before stopping an experiment"
+                assert self.connection is not None, (
+                    "connection must be set before stopping an experiment"
+                )
                 await self.connection.stop_experiment(experiment_id)
                 logger.debug(f"Experiment stopped with ID: {experiment_id}")
 
@@ -2168,9 +2166,9 @@ class StreamingViewer:
 
         if self.is_streaming:
             # During streaming: use simple linear layout (N, 1, 1, 1, 1, Y, X)
-            assert (
-                self.image_shape is not None
-            ), "image_shape must be set before building array"
+            assert self.image_shape is not None, (
+                "image_shape must be set before building array"
+            )
             shape = (
                 total_frames,
                 1,
@@ -2437,7 +2435,7 @@ class StreamingViewer:
 
         if not self.frame_data:
             logger.warning(
-                "Restructure called but no frame data " "exists, skipping..."
+                "Restructure called but no frame data exists, skipping..."
             )
             return
 
@@ -2737,7 +2735,9 @@ class StreamingViewer:
                 for s_ in range(num_s)
                 for m_ in range(num_m)
             ]
-            dimensions.append(Dimension(name="p", type="position", coords=pos_coords))  # type: ignore[arg-type]
+            dimensions.append(
+                Dimension(name="p", type="position", coords=pos_coords)
+            )  # type: ignore[arg-type]
         if num_c > 1:
             dimensions.append(
                 Dimension(name="c", count=num_c, chunk_size=1, type="channel")

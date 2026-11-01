@@ -676,11 +676,14 @@ npx --yes --package @mermaid-js/mermaid-cli -- mmdc -i docs/napari_zenapi_stream
 python -m pip install -e ".[dev,testing]" build
 python -m pytest -q src/napari_zen_streaming/_tests
 python -m ruff check src/napari_zen_streaming
-python -m black --check src/napari_zen_streaming
+python -m ruff format --check src/napari_zen_streaming
 python -m build --sdist --wheel
 ```
 
-- Format settings are defined in `pyproject.toml` (Black, line length 79).
+- Ruff lints and formats the code using the settings in `pyproject.toml`
+  (line length 79). In VS Code, set
+  `"ruff.configurationPreference": "filesystemFirst"` so user-level Ruff
+  settings do not override the repository configuration.
 - Tests mock the gateway and cover routing, partial acquisitions, mosaics,
   metadata refresh, dtype handling, progress, configuration, and layer ownership.
 - A clean Windows environment passed the full test suite with Python 3.12.15,

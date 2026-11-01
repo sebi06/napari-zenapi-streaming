@@ -46,7 +46,7 @@ jobs:
               shell: bash
               run: |
                   python -m pip install --upgrade pip
-                  python -m pip install -e ".[testing]" build ruff black \
+                  python -m pip install -e ".[testing]" build ruff \
                     "https://github.com/zeiss-microscopy/OAD/releases/download/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" \
                     "https://github.com/zeiss-microscopy/OAD/releases/download/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
 
@@ -54,7 +54,7 @@ jobs:
               run: python -m ruff check src/napari_zen_streaming
 
             - name: Check formatting
-              run: python -m black --check src/napari_zen_streaming
+              run: python -m ruff format --check src/napari_zen_streaming
 
             - name: Run tests
               uses: aganders3/headless-gui@v2

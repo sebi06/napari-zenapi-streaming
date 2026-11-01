@@ -108,9 +108,7 @@ class ZENApplication:
             async with self.pipeline:
                 while True:
                     try:
-                        if (
-                            not self.viewer.viewer.window._qt_window.isVisible()
-                        ):
+                        if not self.viewer.viewer.window._qt_window.isVisible():
                             break
                     except RuntimeError:
                         # Qt window deleted — napari is closing.

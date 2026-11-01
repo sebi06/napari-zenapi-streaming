@@ -149,7 +149,7 @@ def calculate_area(radius: float) -> float:
 
 ### Python Style
 - **Python 3.11+** minimum (use modern type hints)
-- **Line length:** 79 characters (Black formatter setting in this repo)
+- **Line length:** 79 characters (Ruff formatter setting in this repo)
 - **Imports:** Group by standard lib, third-party, local modules
 - **Type hints:** Use for function parameters and return values
 - **Docstrings:** Google style with Args/Returns/Raises sections
@@ -267,11 +267,11 @@ Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensio
 ### ZEN API
 - **zen_api** - ZEISS ZEN API client (gRPC stubs)
    - Install an authorized compatible wheel separately; no public URL is assumed
-   - Local validation uses zen-api 2026.11.1; CI requires `ZEN_API_WHEEL_URL`
+   - CI installs zen-api 2026.7.1 and zen-api-utils 0.1.0 from OAD release URLs
 
 ### Development
 - **pytest** - Testing
-- **black** - Code formatting
+- **ruff** - Linting and code formatting
 - **mypy** - Type checking
 
 ## Common Tasks
