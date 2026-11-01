@@ -86,7 +86,7 @@ jobs:
             - name: Build and publish to PyPI
               env:
                   TWINE_USERNAME: __token__
-                  TWINE_PASSWORD: ${{ secrets.TWINE_API_KEY }}
+                  TWINE_PASSWORD: ${{ secrets.NAPARI_ZENAPI_STREAMING_TOKEN }}
               run: |
                   python -m build .
                   twine check dist/*
