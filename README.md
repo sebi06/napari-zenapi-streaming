@@ -22,6 +22,12 @@ previously selected channel is not available in the new mode or experiment.
 A **standalone CLI** (`ZEN_stream2omezarr.py`) is also available to stream
 directly to OME-ZARR without napari.
 
+![Napari - Streaming Pixel from ZEN via ZEN-API](docs/napari_zenapi_stream1.png)
+
+When finished the resulting OME-ZARR, created from the ZEN pixel stream can be shown in Napari.
+
+![Napari - OME-ZARR from ZEN Acquistion](docs/napari_zen.png)
+
 ## Current status
 
 - Project phase: alpha / MVP
