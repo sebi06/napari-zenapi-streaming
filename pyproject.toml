@@ -1,6 +1,6 @@
 [project]
 name = "napari-zenapi-streaming"
-version = "0.0.1"
+version = "0.0.2"
 description = "ZEN API streaming plugin for napari"
 readme = "README.md"
 requires-python = ">=3.12, <3.15"
@@ -33,7 +33,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "ome-writers[acquire-zarr]",
-    "ngff-zarr[dask-image]",
+    "ngff-zarr[dask-image]>=0.51.0",
     "zarr>=3",
     "zen_api>=2026.5.1,<=2026.11.1",
     "zen_api_utils>=0.1.0,<0.2",

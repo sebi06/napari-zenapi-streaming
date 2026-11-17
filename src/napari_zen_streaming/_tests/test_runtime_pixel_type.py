@@ -1,40 +1,95 @@
 """Tests for runtime ZEN pixel-type handling."""
 
+import asyncio
+
 import numpy as np
 import pytest
-from zen_api.acquisition.v1beta import PixelType
+from zen_api.acquisition.v1beta import (
+    ExperimentStreamingServiceMonitorAllExperimentsResponse,
+    FrameData,
+    FramePixelData,
+    PixelType,
+)
 
-from napari_zen_streaming.ZEN_stream2omezarr import (
+from napari_zen_streaming._scene_geometry import (
+    TileGeometry,
+    assemble_channel_scene_mosaics,
+)
+from napari_zen_streaming.ZEN_pipeline import StreamingPipeline
+from napari_zen_streaming.ZEN_utils import (
     _decode_grayscale_frame,
     _runtime_grayscale_dtype,
 )
-from napari_zen_streaming.ZEN_utils import normalize_for_display
 
 
 @pytest.mark.parametrize(
-    "target",
-    [np.uint8, np.dtype("uint8"), np.uint16, np.dtype("uint16"), np.float32],
+    ("pixel_type", "dtype", "signal"),
+    [
+        (PixelType.GRAY8, np.uint8, 200),
+        (PixelType.GRAY16, np.uint16, 3100),
+    ],
 )
-@pytest.mark.parametrize("shape", [(0, 2), (2, 2)])
-@pytest.mark.parametrize("constant", [False, True])
-def test_normalize_display_preserves_requested_dtype(
-    target, shape, constant
+def test_display_pipeline_preserves_pixels_through_mosaic(
+    pixel_type, dtype, signal
 ) -> None:
-    """Dtype objects and scalar classes share normalization and edge cases."""
-    image = np.arange(np.prod(shape), dtype=np.uint16).reshape(shape)
-    if constant:
-        image.fill(5)
+    """Different tile ranges and constant tiles retain their original values."""
+    images = [
+        np.array([[100, 110, 120], [130, 120, 110]], dtype=dtype),
+        np.array([[100, signal, 120], [130, 120, 110]], dtype=dtype),
+        np.full((2, 3), 100, dtype=dtype),
+    ]
+    frames = []
+    geometries = {}
+    pipeline = object.__new__(StreamingPipeline)
 
-    result = normalize_for_display(image, target)
+    class Viewer:
+        async def add_frame(self, image, metadata) -> None:
+            frames.append((0, 0, metadata.frame_m, 0, image))
 
-    assert result.dtype == np.dtype(target)
-    assert result.shape == image.shape
-    if image.size:
-        assert result.min() == 0
-        maximum = (
-            np.iinfo(target).max if np.issubdtype(target, np.integer) else 1
+    pipeline.viewer = Viewer()
+    pipeline.frames_processed = 0
+    pipeline.stop_event = asyncio.Event()
+    pipeline.stop_event.set()
+    pipeline.queue = asyncio.Queue()
+    for tile, image in enumerate(images):
+        frame_data = FrameData(
+            pixel_data=FramePixelData(
+                pixel_type=pixel_type, raw_data=image.tobytes()
+            )
         )
-        assert result.max() == (0 if constant else maximum)
+        frame_data.frame_size.width = 3
+        frame_data.frame_size.height = 2
+        frame_data.scaling.x = 1e-6
+        frame_data.scaling.y = 1e-6
+        frame_data.frame_stage_position.x = tile * 3e-6
+        frame_data.frame_stage_position.y = 0.0
+        frame_data.frame_stage_position.z = 0.0
+        frame_data.frame_position.s = 0
+        frame_data.frame_position.t = 0
+        frame_data.frame_position.m = tile
+        frame_data.frame_position.c = 0
+        frame_data.frame_position.h = 0
+        frame_data.frame_position.z = 0
+        pipeline.queue.put_nowait(
+            ExperimentStreamingServiceMonitorAllExperimentsResponse(
+                frame_data=frame_data
+            )
+        )
+        geometries[(0, tile)] = TileGeometry(
+            0, tile, tile, tile * 3.0, 0.0, 0.0, 1.0, 1.0, 2, 3
+        )
+
+    asyncio.run(pipeline._process_frames())
+
+    assert pipeline.frames_processed == len(images)
+    for (_, _, _, _, actual), expected in zip(frames, images, strict=True):
+        assert actual.dtype == expected.dtype
+        np.testing.assert_array_equal(actual, expected)
+    mosaic = assemble_channel_scene_mosaics(frames, geometries)
+    assert mosaic.dtype == np.dtype(dtype)
+    np.testing.assert_array_equal(
+        mosaic[0, 0, 0], np.concatenate(images, axis=1)
+    )
 
 
 @pytest.mark.parametrize(

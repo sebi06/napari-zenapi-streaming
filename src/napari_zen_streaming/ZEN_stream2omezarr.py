@@ -78,7 +78,6 @@ from zen_api.acquisition.v1beta import (
     ExperimentStreamingServiceMonitorAllExperimentsRequest,
     ExperimentStreamingServiceMonitorAllExperimentsResponse,
     ExperimentStreamingServiceStub,
-    PixelType,
 )
 
 from napari_zen_streaming._logging import configure_logging
@@ -93,23 +92,25 @@ from napari_zen_streaming.ZEN_config import (
     resolve_gateway_config,
 )
 from napari_zen_streaming.ZEN_omezarr import (
+    OME_ZARR_VERSION,
     ExperimentConfig,
+    finalize_omezarr_output,
     load_experiment_acquisition,
     load_experiment_config,
     open_in_napari_viewer,
     open_in_ndv_viewer,
     start_experiment,
+    validate_omezarr_version,
+)
+from napari_zen_streaming.ZEN_utils import (
+    _decode_grayscale_frame,
+    _runtime_grayscale_dtype,
 )
 
 logger = logging.getLogger(__name__)
 
 # Default data type for pixel streaming
 DEFAULT_DTYPE = np.dtype(np.uint16)
-
-_GRAYSCALE_PIXEL_DTYPES: dict[PixelType, np.dtype] = {
-    PixelType.GRAY8: np.dtype(np.uint8),
-    PixelType.GRAY16: np.dtype(np.uint16),
-}
 
 # Inactivity timeout (seconds) for pixel-stream completion.
 _STATUS_POLL_TIMEOUT: float = 30.0
@@ -126,70 +127,6 @@ class IncompleteAcquisitionError(RuntimeError):
             f"Incomplete acquisition: received {received}/{expected} frames. "
             f"Partial output: {zarr_path}. See acquisition_status.json."
         )
-
-
-def _runtime_grayscale_dtype(
-    pixel_type: PixelType,
-    payload_size: int,
-    width: int,
-    height: int,
-) -> np.dtype:
-    """Return and validate the dtype reported by a streamed frame.
-
-    Args:
-        pixel_type: ZEN runtime pixel type.
-        payload_size: Number of bytes in the frame payload.
-        width: Frame width in pixels.
-        height: Frame height in pixels.
-
-    Returns:
-        NumPy dtype for a supported grayscale frame.
-
-    Raises:
-        ValueError: If the pixel type is unsupported or payload size differs
-            from the dimensions and reported pixel type.
-    """
-    try:
-        dtype = _GRAYSCALE_PIXEL_DTYPES[pixel_type]
-    except KeyError as exc:
-        name = getattr(pixel_type, "name", str(pixel_type))
-        raise ValueError(
-            f"Unsupported streamed pixel type for OME-ZARR: {name}"
-        ) from exc
-
-    expected_size = width * height * dtype.itemsize
-    if payload_size != expected_size:
-        raise ValueError(
-            "Streamed pixel payload size does not match its runtime "
-            f"metadata: got {payload_size} bytes, expected "
-            f"{expected_size} for {width}x{height} {pixel_type.name}."
-        )
-    return dtype
-
-
-def _decode_grayscale_frame(
-    raw_data: bytes,
-    dtype: np.dtype,
-    width: int,
-    height: int,
-) -> np.ndarray:
-    """Decode a ZEN grayscale payload in native YX array order.
-
-    ZEN reports ``width`` as X and ``height`` as Y. NumPy image arrays use
-    ``(Y, X)``, so the flat payload must be reshaped to ``(height, width)``
-    without an additional rotation or transpose.
-
-    Args:
-        raw_data: Flat grayscale pixel payload.
-        dtype: Runtime NumPy pixel dtype.
-        width: Frame width along X.
-        height: Frame height along Y.
-
-    Returns:
-        C-contiguous image array with shape ``(height, width)``.
-    """
-    frame = np.frombuffer(raw_data, dtype=dtype).reshape((height, width))
-    return np.ascontiguousarray(frame)
 
 
 def _plate_row_name(row: int) -> str:
@@ -736,8 +673,10 @@ def generate_omezarr_pyramids(
         raise ValueError("pyramid_levels must be at least 1")
 
     import ngff_zarr as nz
+    from ngff_zarr.v06.zarr_metadata import Metadata
 
     zarr_path = Path(zarr_path)
+    validate_omezarr_version(zarr_path)
     image_paths = _find_omezarr_image_paths(zarr_path)
     if not image_paths:
         raise RuntimeError(f"No OME-Zarr image groups found in: {zarr_path}")
@@ -776,13 +715,20 @@ def generate_omezarr_pyramids(
             chunks=chunks,
             cache=True,
         )
+        if not isinstance(multiscales.metadata, Metadata):
+            raise ValueError(
+                "Pyramids require OME-Zarr 0.6 coordinate metadata"
+            )
         for level, dataset in enumerate(multiscales.metadata.datasets):
             dataset.path = str(level)
+            for transform in dataset.coordinateTransformations:
+                if transform.input is not None:
+                    transform.input.path = dataset.path
 
         nz.to_ome_zarr(
             image_path,
             multiscales,
-            version="0.5",
+            version=OME_ZARR_VERSION,
             overwrite=False,
             start_level=1,
             chunks_per_shard=chunks_per_shard,
@@ -1304,6 +1250,7 @@ async def _stream_to_omezarr_connected(
                     f"T={t_idx} S={s_idx} M={m_idx} C={c_idx} Z={z_idx}"
                 )
 
+    finalize_omezarr_output(zarr_path)
     logger.info(f"OME-ZARR written successfully: {zarr_path}")
     return zarr_path
 
@@ -2072,6 +2019,7 @@ async def _stream_to_omezarr_with_config_connected(
                 keep_source_tiles=ecfg.keep_source_tiles,
             )
 
+    finalize_omezarr_output(zarr_path)
     missing_coordinates = [
         coordinate
         for coordinate, index in coord_to_linear.items()
