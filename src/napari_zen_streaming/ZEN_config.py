@@ -99,8 +99,8 @@ def initialize_user_config() -> Path:
     return config_file
 
 
-# Raw ZEN stream dtype used by Display mode and legacy paths. The OME-ZARR
-# writer derives its dtype from each runtime frame's PixelType instead.
+# Compatibility fallback for legacy OME-ZARR configuration. Frame decoding
+# derives its dtype from each runtime frame's PixelType.
 DEFAULT_PIXEL_DTYPE = np.dtype(np.uint16)
 
 
@@ -117,7 +117,6 @@ class ZENConfig:
 
     # Data configuration
     pixel_dtype: np.dtype = field(default_factory=lambda: DEFAULT_PIXEL_DTYPE)
-    display_dtype: np.dtype = field(default_factory=lambda: np.dtype(np.uint8))
 
     # Processing configuration
     image_buffer_size: int = 100

@@ -477,6 +477,7 @@ def test_mode_switch_keeps_dimensions_and_hides_writer_options() -> None:
         "auto_trigger_row",
         "channel_filter_row",
         "chk_live_latest",
+        "chk_stream_only",
         "omezarr_dir_row",
         "omezarr_comp_row",
         "dim_panel",
@@ -505,6 +506,7 @@ def test_mode_switch_keeps_dimensions_and_hides_writer_options() -> None:
     assert visibility["omezarr_options_panel"] == [False, False, True]
     assert visibility["refresh_experiment_button"] == [False, True, True]
     assert visibility["start_button"] == [False, True, True]
+    assert visibility["chk_stream_only"] == [True, True, False]
 
 
 def test_channel_filter_uses_active_display_workflow() -> None:

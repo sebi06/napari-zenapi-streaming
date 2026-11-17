@@ -115,7 +115,6 @@ def test_stop_drains_queued_frames(monkeypatch) -> None:
         lambda response, *_args: (response, None),
     )
     pipeline.viewer = Viewer()
-    pipeline.config = SimpleNamespace(pixel_dtype=None, display_dtype=None)
     pipeline.frames_received = 2
     pipeline.frames_processed = 0
     pipeline.reader_task = None

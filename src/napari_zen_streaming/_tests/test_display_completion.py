@@ -5,6 +5,8 @@ import time
 from collections import deque
 from types import SimpleNamespace
 
+import pytest
+
 from napari_zen_streaming.ZEN_ui import StreamingViewer
 
 
@@ -60,3 +62,30 @@ def test_status_finish_waits_for_trailing_scene_tiles() -> None:
         return received
 
     assert asyncio.run(complete_stream()) == 48
+
+
+def test_stream_only_completion_waits_for_inactivity_without_history() -> None:
+    """A channel change or ZEN status cannot truncate trailing preview frames."""
+    viewer = object.__new__(StreamingViewer)
+    viewer._run_stream_only = True
+    viewer._stream_frames_received = 3
+    viewer.last_frame_time = time.time()
+    viewer.config = SimpleNamespace(restructure_timeout=0.03)
+
+    def reject_frame_keys():
+        pytest.fail("stream-only completion requested retained history")
+
+    viewer._received_display_frame_keys = reject_frame_keys
+
+    async def finish() -> int:
+        async def trailing_frame() -> None:
+            await asyncio.sleep(0.01)
+            viewer._stream_frames_received += 1
+            viewer.last_frame_time = time.time()
+
+        task = asyncio.create_task(trailing_frame())
+        received = await viewer._wait_for_display_stream_completion()
+        await task
+        return received
+
+    assert asyncio.run(finish()) == 4

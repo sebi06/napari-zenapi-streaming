@@ -8,7 +8,7 @@
 #   - start_experiment() helper (ZEN-API experiment control)
 #   - build_progress_bar() for console progress display
 #   - open_in_ndv_viewer() / open_in_napari_viewer() for viewing
-#   - read_omezarr_axis_names() for OME-ZARR 0.5 metadata
+#   - OME-ZARR 0.6 output finalization and version policy
 #
 # Copyright(c) 2026 Carl Zeiss AG, Germany. All Rights Reserved.
 #
@@ -21,12 +21,15 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import napari
+    import zarr
+    from ngff_zarr import NgffImage
 
 # ZEN API auto-generated stubs
 from zen_api.acquisition.v1beta import (
@@ -50,6 +53,86 @@ PLUGIN_DEFAULT_OVERWRITE_CZI = True
 PLUGIN_DEFAULT_OVERWRITE_ZARR = True
 PLUGIN_DEFAULT_SPATIAL_SHARD_SIZE_CHUNKS = 2
 PLUGIN_DEFAULT_PYRAMID_LEVELS = 0
+OME_ZARR_VERSION = "0.6"
+
+
+def _omezarr_groups(zarr_path: Path) -> Iterator[tuple[Path, "zarr.Group"]]:
+    """Walk group metadata without reading image pixels."""
+    import zarr
+
+    def visit(
+        group: zarr.Group, path: Path
+    ) -> Iterator[tuple[Path, zarr.Group]]:
+        yield path, group
+        for name, child in group.groups():
+            yield from visit(child, path / name)
+
+    yield from visit(
+        zarr.open_group(zarr_path, mode="r", use_consolidated=False),
+        zarr_path,
+    )
+
+
+def validate_omezarr_version(zarr_path: Path) -> None:
+    """Reject missing, prerelease, or pre-0.6 OME-Zarr metadata."""
+    for path, group in _omezarr_groups(zarr_path):
+        ome = group.attrs.get("ome")
+        if ome is None and path != zarr_path:
+            continue
+        version = ome.get("version") if isinstance(ome, Mapping) else None
+        match = (
+            re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", version)
+            if isinstance(version, str)
+            else None
+        )
+        if match is None or tuple(
+            int(part or 0) for part in match.groups()
+        ) < (0, 6, 0):
+            raise ValueError(
+                f"OME-Zarr 0.6 or newer is required; found {version!r} "
+                f"at '{path}'. Older stores require explicit conversion."
+            )
+
+
+def finalize_omezarr_output(zarr_path: Path) -> None:
+    """Convert backend metadata to 0.6 without rewriting acquired pixels.
+
+    The streaming backend currently emits older staging metadata. Convert
+    each image's coordinate model with ngff-zarr before updating containers;
+    changing version strings alone would leave invalid image metadata.
+    """
+    import ngff_zarr as nz
+    import zarr
+
+    groups = list(_omezarr_groups(zarr_path))
+    image_count = 0
+    for path, group in groups:
+        attributes = dict(group.attrs)
+        ome = attributes.get("ome")
+        if not isinstance(ome, Mapping) or "multiscales" not in ome:
+            continue
+        nz.upgrade_ome_zarr(path, version=OME_ZARR_VERSION, validate=True)
+        converted = zarr.open_group(path, mode="a", use_consolidated=False)
+        converted_ome = converted.attrs["ome"]
+        if not isinstance(converted_ome, Mapping):
+            raise ValueError(f"Invalid converted OME-Zarr metadata: {path}")
+        converted.attrs.update({**attributes, "ome": {**ome, **converted_ome}})
+        nz.from_ngff_zarr(path, validate=True, kind="multiscales")
+        image_count += 1
+    if not image_count:
+        raise ValueError(f"No OME-Zarr images found in '{zarr_path}'")
+
+    for _path, group in groups:
+        ome = group.attrs.get("ome")
+        if isinstance(ome, Mapping) and "multiscales" not in ome:
+            container = zarr.open_group(
+                _path, mode="a", use_consolidated=False
+            )
+            container.attrs["ome"] = {**ome, "version": OME_ZARR_VERSION}
+    validate_omezarr_version(zarr_path)
+    logger.info(
+        "Finalized OME-Zarr %s output: %s", OME_ZARR_VERSION, zarr_path
+    )
 
 
 @dataclass
@@ -634,7 +717,7 @@ def open_in_ndv_viewer(zarr_path: Path) -> None:
     """Open an OME-ZARR dataset in the ndv viewer.
 
     Reads axis names (T, C, Z, Y, X) and per-axis scales from the OME-ZARR
-    0.5 metadata stored in ``zarr.json`` and wraps the highest-resolution
+    0.6+ metadata stored in ``zarr.json`` and wraps the highest-resolution
     array as a dask-backed ``xr.DataArray`` with physically-spaced
     coordinates so that ndv shows correct proportions (including Z depth)
     and labelled sliders.
@@ -678,8 +761,7 @@ def open_in_ndv_viewer(zarr_path: Path) -> None:
             return
         logger.info(f"Array shape: {zarr_arr.shape}, dtype: {zarr_arr.dtype}")
 
-        # Read axis names from OME-ZARR 0.5 metadata (zarr v3: zarr.json).
-        # ome-writers 0.3+ stores multiscales under attributes.ome.multiscales
+        # Read the physical axes from the OME-Zarr coordinate model.
         axis_names = read_omezarr_axis_names(zarr_path)
         axis_scales = read_omezarr_axis_scales(zarr_path)
 
@@ -710,6 +792,44 @@ def open_in_ndv_viewer(zarr_path: Path) -> None:
         )
 
 
+def _napari_omezarr_paths(zarr_path: Path) -> list[Path]:
+    """Resolve collection series without requiring companion OME-XML."""
+    import zarr
+
+    validate_omezarr_version(zarr_path)
+    root = zarr.open_group(zarr_path, mode="r")
+    attributes = dict(root.attrs)
+    ome = attributes.get("ome", attributes)
+    if not isinstance(ome, Mapping):
+        raise ValueError("OME metadata must be an object")
+    if "bioformats2raw.layout" not in ome or "plate" in ome:
+        return [zarr_path]
+
+    attributes = dict(root["OME"].attrs)
+    ome = attributes.get("ome", attributes)
+    if not isinstance(ome, Mapping):
+        raise ValueError("OME series metadata must be an object")
+    series = ome.get("series")
+    if series is None:
+        # XML-only collections remain the reader's responsibility.
+        return [zarr_path]
+    if not isinstance(series, list) or not series:
+        raise ValueError(
+            "OME series metadata must be a nonempty image path list"
+        )
+    paths = []
+    for path in series:
+        if not isinstance(path, str) or not path:
+            raise ValueError("OME series image paths must be nonempty strings")
+        relative_path = Path(path)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError(
+                "OME series image paths must be relative to the store"
+            )
+        paths.append(zarr_path / relative_path)
+    return paths
+
+
 def open_in_napari_viewer(
     zarr_path: Path,
     viewer: "napari.Viewer | None" = None,
@@ -717,7 +837,9 @@ def open_in_napari_viewer(
     """Open an OME-ZARR dataset in the napari viewer.
 
     Uses the ``napari-ome-zarr`` plugin to read the dataset with full
-    OME-ZARR metadata support (channels, scales, axis labels).
+    OME-ZARR metadata support (channels, scales, axis labels). Collection
+    images are opened from their advertised OME series paths, avoiding
+    readers that require companion XML at the collection root.
 
     When *viewer* is ``None`` (standalone mode) a new viewer is created
     and ``napari.run()`` is called to start the Qt event loop.  When an
@@ -754,17 +876,9 @@ def open_in_napari_viewer(
         logger.info(f"Opening OME-ZARR in napari viewer: {zarr_path}")
         if viewer is None:
             viewer = napari.Viewer()
-        viewer.open(str(zarr_path), plugin="napari-ome-zarr")
+        for image_path in _napari_omezarr_paths(zarr_path):
+            viewer.open(str(image_path), plugin="napari-ome-zarr")
         logger.info("napari viewer opened successfully.")
-
-        # Label viewer dimension sliders and layer names with
-        # OME-ZARR axis names (e.g. T, C, Z, Y, X).
-        axis_names = read_omezarr_axis_names(zarr_path)
-        if axis_names:
-            viewer.dims.axis_labels = axis_names
-            suffix = f" ({','.join(axis_names)})"
-            for layer in viewer.layers:
-                layer.name = f"{layer.name}{suffix}"
 
         if standalone:
             napari.run()
@@ -774,18 +888,12 @@ def open_in_napari_viewer(
             exc_info=True,
         )
         raise RuntimeError(
-            f"Could not display '{zarr_path.name}' in napari. "
-            f"Verify the file is a valid OME-ZARR and that "
-            f"napari-ome-zarr is up to date."
+            f"Could not display '{zarr_path.name}' in napari: {e}"
         ) from e
 
 
 def read_omezarr_axis_names(zarr_path: Path) -> tuple[str, ...] | None:
-    """Read axis names from the first OME-ZARR 0.5 image metadata.
-
-    OME-ZARR 0.5 (zarr v3) stores the multiscales metadata inside
-    ``zarr.json → attributes.ome.multiscales``, unlike OME-ZARR 0.4
-    which used ``.zattrs``.
+    """Read axis names from the first OME-ZARR 0.6+ image metadata.
 
     Args:
         zarr_path: Path to the ``.ome.zarr`` directory.
@@ -798,35 +906,14 @@ def read_omezarr_axis_names(zarr_path: Path) -> tuple[str, ...] | None:
     if image_metadata is None:
         return None
 
-    _, root_meta = image_metadata
-
-    multiscales = (
-        root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
-    )
-    if not isinstance(multiscales, list) or not multiscales:
-        return None
-    first_multiscale = multiscales[0]
-    if not isinstance(first_multiscale, dict):
-        return None
-    axes = first_multiscale.get("axes", [])
-    if not axes:
-        return None
-
-    try:
-        axis_names = tuple(str(axis["name"]).upper() for axis in axes)
-    except (KeyError, TypeError):
-        return None
+    image = _read_ngff_image(image_metadata[0])
+    axis_names = tuple(str(axis).upper() for axis in image.dims)
     logger.info(f"OME-ZARR axis names: {axis_names}")
     return axis_names
 
 
 def read_omezarr_axis_scales(zarr_path: Path) -> dict[str, float] | None:
-    """Read scale factors from the first OME-ZARR 0.5 image metadata.
-
-    The scale transform is stored in
-    ``zarr.json → attributes.ome.multiscales[0].datasets[0].coordinateTransformations``
-    as a list entry with ``{"type": "scale", "scale": [s0, s1, ...]}``.
-    The scale values are ordered to match the axes list.
+    """Read physical scale factors from the first OME-ZARR 0.6+ image.
 
     Args:
         zarr_path: Path to the ``.ome.zarr`` directory.
@@ -839,47 +926,34 @@ def read_omezarr_axis_scales(zarr_path: Path) -> dict[str, float] | None:
     if image_metadata is None:
         return None
 
-    _, root_meta = image_metadata
-
-    multiscales = (
-        root_meta.get("attributes", {}).get("ome", {}).get("multiscales", [])
-    )
-    if not isinstance(multiscales, list) or not multiscales:
-        return None
-    first_multiscale = multiscales[0]
-    if not isinstance(first_multiscale, dict):
-        return None
-    axes = first_multiscale.get("axes", [])
-    datasets = first_multiscale.get("datasets", [])
-    if not axes or not datasets:
-        return None
-
-    # Find the scale transform for the highest-resolution dataset (index 0)
-    transforms = datasets[0].get("coordinateTransformations", [])
-    scale_values = None
-    for t in transforms:
-        if t.get("type") == "scale":
-            scale_values = t.get("scale")
-            break
-
-    if scale_values is None or len(scale_values) != len(axes):
-        return None
-
-    try:
-        axis_scales = {
-            str(axis["name"]).upper(): float(scale)
-            for axis, scale in zip(axes, scale_values, strict=True)
-        }
-    except (KeyError, TypeError, ValueError):
-        return None
+    image = _read_ngff_image(image_metadata[0])
+    axis_scales = {
+        str(axis).upper(): float(scale) for axis, scale in image.scale.items()
+    }
     logger.info(f"OME-ZARR axis scales: {axis_scales}")
     return axis_scales
+
+
+def _read_ngff_image(image_path: Path) -> "NgffImage":
+    """Read a validated image coordinate model without computing pixels."""
+    import ngff_zarr as nz
+
+    multiscales = nz.from_ngff_zarr(
+        image_path, validate=True, kind="multiscales"
+    )
+    if not isinstance(multiscales, nz.NgffMultiscales):
+        raise ValueError(
+            f"Expected an OME-Zarr multiscale image: {image_path}"
+        )
+    return multiscales.images[0]
 
 
 def _read_first_image_metadata(
     zarr_path: Path,
 ) -> tuple[Path, dict[str, Any]] | None:
     """Return metadata for the root or first descendant multiscale image."""
+    if zarr_path.exists():
+        validate_omezarr_version(zarr_path)
     root_metadata = zarr_path / "zarr.json"
     candidates = [root_metadata]
     if zarr_path.exists():

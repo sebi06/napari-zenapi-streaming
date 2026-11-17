@@ -12,13 +12,17 @@ import pytest
 import zarr
 from grpclib.const import Status
 from grpclib.exceptions import GRPCError
+from zen_api.acquisition.v1beta import PixelType
 
 import napari_zen_streaming.ZEN_stream2omezarr as stream_module
 from napari_zen_streaming._scene_geometry import (
     TileGeometry,
     calculate_scene_geometry,
 )
-from napari_zen_streaming.ZEN_omezarr import ExperimentConfig
+from napari_zen_streaming.ZEN_omezarr import (
+    ExperimentConfig,
+    finalize_omezarr_output,
+)
 from napari_zen_streaming.ZEN_stream2omezarr import (
     _assemble_scene_mosaics,
     _assemble_scene_plane,
@@ -259,7 +263,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
                     ),
                     frame_size=SimpleNamespace(width=2, height=2),
                     pixel_data=SimpleNamespace(
-                        pixel_type=stream_module.PixelType.GRAY16,
+                        pixel_type=PixelType.GRAY16,
                         raw_data=image.tobytes(),
                     ),
                     scaling=SimpleNamespace(x=1e-6, y=1e-6),
@@ -379,6 +383,10 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
     monkeypatch.setattr(
         stream_module, "_open_channel_streams", open_channel_streams
     )
+    finalized = []
+    monkeypatch.setattr(
+        stream_module, "finalize_omezarr_output", finalized.append
+    )
     monkeypatch.setattr(stream_module, "start_experiment", start_experiment)
     monkeypatch.setattr(stream_module, "create_stream", _create_stream)
     monkeypatch.setattr(
@@ -455,6 +463,7 @@ def test_configured_hcs_stream_writes_merged_scene_directly(
         assert (record.exc_info is None) == (live_status == "finished")
 
     status = json.loads((zarr_path / "acquisition_status.json").read_text())
+    assert finalized == [zarr_path]
     assert status["complete"] is not incomplete
     assert status["experiment_id"] == "experiment-1"
     assert status["received_frames"] == 2
@@ -523,6 +532,7 @@ def _create_raw_tile(
         dimension_names=("t", "c", "y", "x"),
     )
     group.attrs["ome"] = {
+        "version": "0.5",
         "multiscales": [
             {
                 "axes": [
@@ -551,7 +561,7 @@ def _create_raw_tile(
                     }
                 ],
             }
-        ]
+        ],
     }
 
 
@@ -619,6 +629,124 @@ def test_assemble_scene_mosaic_removes_raw_tiles_when_disabled(
     assert root["scene_0"]["0"].shape == (1, 1, 4, 7)
     assert not any(f"raw_{index}" in root for index in range(2))
     assert not root["scene_0"].attrs["zen_scene"]["source_tiles_retained"]
+
+
+@pytest.mark.parametrize("hcs", [False, True])
+def test_finalize_output_converts_schema_and_preserves_pixels(
+    tmp_path: Path, hcs: bool
+) -> None:
+    """Backend staging becomes uniform 0.6 metadata without rewriting chunks."""
+    import ngff_zarr as nz
+
+    path = tmp_path / "final.ome.zarr"
+    root = zarr.open_group(path, mode="w")
+    root.attrs["ome"] = {
+        "version": "0.5",
+        **({"plate": {}} if hcs else {"bioformats2raw.layout": 3}),
+    }
+    if hcs:
+        image_name = "A/1/0"
+        well = root.require_group("A/1")
+        well.attrs["ome"] = {
+            "version": "0.5",
+            "well": {"images": [{"path": "0"}]},
+        }
+    else:
+        image_name = "scene_0"
+        root.create_group("OME").attrs["ome"] = {
+            "version": "0.5",
+            "series": [image_name],
+        }
+    _create_raw_tile(root, 0, 3100, path=image_name)
+    if not hcs:
+        _create_raw_tile(root, 1, 120, path="raw_source")
+    root[image_name].attrs["zen_scene"] = {"source_tiles_retained": False}
+    chunks = {
+        file.relative_to(path): file.read_bytes()
+        for file in path.rglob("*")
+        if file.is_file() and "c" in file.relative_to(path).parts
+    }
+    assert chunks
+
+    finalize_omezarr_output(path)
+
+    for metadata_file in path.rglob("zarr.json"):
+        ome = json.loads(metadata_file.read_text())["attributes"].get("ome")
+        if ome is not None:
+            assert ome["version"] == "0.6"
+    image_path = path / image_name
+    image = zarr.open_group(image_path, mode="r")
+    assert image.attrs["zen_scene"] == {"source_tiles_retained": False}
+    multiscale = image.attrs["ome"]["multiscales"][0]
+    assert "coordinateSystems" in multiscale
+    assert "axes" not in multiscale
+    nz.from_ngff_zarr(image_path, validate=True, kind="multiscales")
+    np.testing.assert_array_equal(image["0"][:], np.full((1, 1, 4, 4), 3100))
+    for chunk_path, content in chunks.items():
+        assert (path / chunk_path).read_bytes() == content
+
+    stream_module.generate_omezarr_pyramids(path, 1, None)
+
+    reopened = nz.from_ngff_zarr(image_path, validate=True, kind="multiscales")
+    assert len(reopened.images) == 2
+    assert all(
+        level.data.dtype == np.dtype(np.uint16) for level in reopened.images
+    )
+    for chunk_path, content in chunks.items():
+        assert (path / chunk_path).read_bytes() == content
+
+
+@pytest.mark.parametrize("positions", [1, 2])
+def test_real_streaming_backend_finishes_as_omezarr_06(
+    tmp_path: Path, positions: int
+) -> None:
+    """Actual backend output is converted before consumers can open it."""
+    from ome_writers import (
+        AcquisitionSettings,
+        Dimension,
+        Position,
+        create_stream,
+    )
+
+    from napari_zen_streaming.ZEN_omezarr import validate_omezarr_version
+
+    path = tmp_path / "streamed.ome.zarr"
+    settings = AcquisitionSettings(
+        root_path=str(path),
+        dimensions=(
+            Dimension(
+                name="p",
+                type="position",
+                count=positions,
+                coords=[
+                    Position(name=f"scene_{index}")
+                    for index in range(positions)
+                ],
+            ),
+            Dimension(name="y", type="space", count=4, scale=0.4, unit="um"),
+            Dimension(name="x", type="space", count=4, scale=0.4, unit="um"),
+        ),
+        dtype="uint16",
+        format="ome-zarr",
+    )
+    expected = np.arange(16, dtype=np.uint16).reshape(4, 4) + 3000
+    with create_stream(settings) as stream:
+        for index in range(positions):
+            stream.append(expected + index * 100)
+
+    finalize_omezarr_output(path)
+
+    validate_omezarr_version(path)
+    root = zarr.open_group(path, mode="r")
+    images = (
+        [root]
+        if positions == 1
+        else [root[name] for name in root["OME"].attrs["ome"]["series"]]
+    )
+    assert len(images) == positions
+    for index, image in enumerate(images):
+        assert image["0"].dtype == np.dtype(np.uint16)
+        np.testing.assert_array_equal(image["0"][:], expected + index * 100)
 
 
 def test_assemble_hcs_scene_mosaic_replaces_tile_images(

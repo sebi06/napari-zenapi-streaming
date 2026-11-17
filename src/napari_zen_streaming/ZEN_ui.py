@@ -44,6 +44,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -164,7 +165,7 @@ class ViewerSignals(QObject):
     - update_layer: Signal to update streaming layer with new data
     - restructure_complete: Signal to split streaming layer into channel layers
     - experiment_finished: Signal that experiment has completed
-    - set_live_preview_option_enabled: Signal to lock or unlock the checkbox
+    - set_live_preview_option_enabled: Signal to lock or unlock display options
     """
 
     create_layer = Signal(object, object)  # image, metadata
@@ -297,6 +298,10 @@ class StreamingViewer:
             True,
         )
         self._run_live_latest: bool | None = None
+        self._stream_only_preference = False
+        self._run_stream_only: bool | None = None
+        self._stream_frames_received = 0
+        self._stream_preview_created = False
 
         # Path retained by the legacy pipeline writer.
         self._last_zarr_path: Path | None = None
@@ -453,6 +458,16 @@ class StreamingViewer:
         self.chk_live_latest.toggled.connect(self._set_live_latest_preference)
         self.signals.set_live_preview_option_enabled.connect(
             self.chk_live_latest.setEnabled
+        )
+        self.chk_stream_only = QCheckBox("Stream only (no history or mosaic)")
+        self.chk_stream_only.setToolTip(
+            "Display arriving frames without retaining the acquisition "
+            "or assembling a final image. The last frame stays visible. "
+            "Use the channel filter to select a channel."
+        )
+        self.chk_stream_only.toggled.connect(self._set_stream_only_preference)
+        self.signals.set_live_preview_option_enabled.connect(
+            self.chk_stream_only.setEnabled
         )
 
         # Output directory row
@@ -644,6 +659,7 @@ class StreamingViewer:
         self.dropdown_layout.addWidget(mode_label)
         self.dropdown_layout.addWidget(self.mode_combo)
         self.dropdown_layout.addWidget(self.channel_filter_row)
+        self.dropdown_layout.addWidget(self.chk_stream_only)
         self.dropdown_layout.addWidget(self.chk_live_latest)
         self.dropdown_layout.addWidget(self.omezarr_dir_row)
         self.dropdown_layout.addWidget(self.omezarr_comp_row)
@@ -672,8 +688,11 @@ class StreamingViewer:
         self._on_mode_changed(self.mode_combo.currentIndex())
 
         # Add dock widget to napari window
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setWidget(self.dropdown_widget)
         self.viewer.window.add_dock_widget(
-            self.dropdown_widget, name="Experiment Selector", area="right"
+            self.scroll_area, name="Experiment Selector", area="right"
         )
 
         logger.debug("Napari viewer initialized")
@@ -712,6 +731,7 @@ class StreamingViewer:
         self.auto_trigger_row.setVisible(show_zarr)
         self.channel_filter_row.setVisible(not show_zarr)
         self.chk_live_latest.setVisible(not show_zarr)
+        self.chk_stream_only.setVisible(not show_zarr)
         self.omezarr_dir_row.setVisible(show_zarr)
         self.omezarr_comp_row.setVisible(show_zarr)
         self.dim_panel.setVisible(
@@ -734,8 +754,23 @@ class StreamingViewer:
         """
         self._live_latest_preference = enabled
 
+    @property
+    def stream_only_enabled(self) -> bool:
+        """Return the frozen display policy, or the next-run preference."""
+        frozen = getattr(self, "_run_stream_only", None)
+        return (
+            frozen
+            if frozen is not None
+            else getattr(self, "_stream_only_preference", False)
+        )
+
+    def _set_stream_only_preference(self, enabled: bool) -> None:
+        """Choose no-history viewing for the next Display acquisition."""
+        self._stream_only_preference = enabled
+        self.chk_live_latest.setEnabled(not enabled)
+
     def _freeze_live_preview_option(self) -> None:
-        """Freeze the live-preview behavior for the current acquisition.
+        """Freeze preview and frame-retention behavior for this acquisition.
 
         This method only reads plain Python state so it is safe when the
         first frame of a ZEN-started acquisition arrives on the worker loop.
@@ -743,13 +778,19 @@ class StreamingViewer:
         """
         if self._run_live_latest is not None:
             return
-        self._run_live_latest = self._live_latest_preference
+        self._run_stream_only = self.stream_only_enabled
+        self._run_live_latest = (
+            self._live_latest_preference or self._run_stream_only
+        )
         self.signals.set_live_preview_option_enabled.emit(False)
 
     def _release_live_preview_option(self) -> None:
-        """Allow the preview option to be changed for the next run."""
+        """Allow display options to be changed for the next run."""
         self._run_live_latest = None
-        self.chk_live_latest.setEnabled(True)
+        self._run_stream_only = None
+        self.chk_live_latest.setEnabled(not self.stream_only_enabled)
+        if hasattr(self, "chk_stream_only"):
+            self.chk_stream_only.setEnabled(True)
 
     def _on_dim_changed(self) -> None:
         """Recalculate total frames when T, C or Z spinboxes change."""
@@ -947,12 +988,17 @@ class StreamingViewer:
         Returns:
             Number of unique frame keys received before finalization.
         """
-        expected = self._expected_display_frame_count()
+        stream_only = self.stream_only_enabled
+        expected = 0 if stream_only else self._expected_display_frame_count()
         status_finished_at = time.time()
         timeout = self.config.restructure_timeout
 
         while True:
-            received = len(self._received_display_frame_keys())
+            received = (
+                self._stream_frames_received
+                if stream_only
+                else len(self._received_display_frame_keys())
+            )
             if expected > 0 and received >= expected:
                 logger.info(
                     "Display stream complete after status finish: %d/%d frames",
@@ -964,6 +1010,13 @@ class StreamingViewer:
             last_activity = self.last_frame_time or status_finished_at
             idle = time.time() - last_activity
             if idle >= timeout:
+                if stream_only:
+                    logger.info(
+                        "Stream-only display inactive for %.1fs: %d frames viewed",
+                        idle,
+                        received,
+                    )
+                    return received
                 logger.warning(
                     "Display stream inactive for %.1fs after status finish: "
                     "%d/%d expected frames; restructuring available data",
@@ -1330,6 +1383,7 @@ class StreamingViewer:
         self.frame_metadata_by_key.clear()
         self.frame_keys.clear()
         self.unique_channels.clear()
+        self._stream_frames_received = 0
         self.is_streaming = True
 
         # Reset on-the-fly zarr write state; apply UI widget overrides
@@ -1792,6 +1846,14 @@ class StreamingViewer:
             Frames are buffered to reduce update frequency and improve performance.
             The actual viewer update happens asynchronously in batches.
         """
+        if (
+            self.display_enabled
+            and self.stream_only_enabled
+            and self._effective_channel_index is not None
+            and metadata.frame_c != self._effective_channel_index
+        ):
+            return
+
         self.image_buffer.append(image)
         self.metadata_buffer.append(metadata)
 
@@ -1862,9 +1924,12 @@ class StreamingViewer:
                 self._reset_zarr_state()
                 self._zarr_write_mode = self.omezarr_enabled
             self.is_streaming = True
+            self._stream_frames_received = 0
 
         if self.display_enabled:
             self._freeze_live_preview_option()
+            if self.stream_only_enabled:
+                self._stream_frames_received += 1
 
         # Disable button when first frame arrives
         if hasattr(self, "start_button"):
@@ -1877,7 +1942,7 @@ class StreamingViewer:
         # task acts purely as an inactivity safety-net — we only need
         # to restart it when no task is running yet.
         omezarr_only = not self.display_enabled and self.omezarr_enabled
-        if omezarr_only:
+        if omezarr_only or self.stream_only_enabled:
             if self.restructure_task is None or self.restructure_task.done():
                 self.restructure_task = asyncio.create_task(
                     self._check_for_restructure()
@@ -1911,6 +1976,7 @@ class StreamingViewer:
         # and _restructure_complete_slot does not try to remove a stale one.
         self.image_layer = None
         self.image_layers.clear()
+        self._stream_preview_created = False
 
         # Close any open napari progress bar from the previous acquisition
         if self._napari_progress is not None:
@@ -1926,10 +1992,10 @@ class StreamingViewer:
     async def _process_buffer(self) -> None:
         """Store buffered frames and update the live preview.
 
-        Every frame is retained in the sparse ``frame_data`` mapping for final
-        scene assembly. When latest-frame preview is enabled, only the newest
-        2D image in each batch crosses the Qt boundary. The legacy mode instead
-        rebuilds and emits the complete 7D acquisition history.
+        Stream-only viewing emits the latest matching frame without retaining
+        history. Otherwise frames are retained in ``frame_data`` for final
+        scene assembly. Latest-frame preview emits the newest 2D image; the
+        legacy mode rebuilds and emits the complete 7D acquisition history.
 
         Thread Safety:
         - Runs in worker thread
@@ -1965,6 +2031,24 @@ class StreamingViewer:
                         "All expected frames received - scheduling zarr finalization."
                     )
                     asyncio.create_task(self.finalize_zarr_acquisition())
+                return
+
+            if self.stream_only_enabled:
+                channel = self._effective_channel_index
+                selected = [
+                    (image, metadata)
+                    for image, metadata in zip(
+                        images, metadata_list, strict=True
+                    )
+                    if channel is None or metadata.frame_c == channel
+                ]
+                if selected:
+                    image, metadata = selected[-1]
+                    if not self._stream_preview_created:
+                        self._stream_preview_created = True
+                        self.signals.create_layer.emit(image, metadata)
+                    else:
+                        self.signals.update_layer.emit(image, [metadata])
                 return
 
             if not self.frame_data:
@@ -2135,22 +2219,6 @@ class StreamingViewer:
         # Move to last frame (most recent data)
         self.viewer.dims.set_current_step(0, data_array.shape[0] - 1)
 
-        # Update contrast limits based on latest image
-        latest = metadata_list[-1]
-        latest_image = self.frame_data[
-            (
-                latest.frame_s,
-                latest.frame_t,
-                latest.frame_m,
-                latest.frame_z,
-                latest.frame_c,
-            )
-        ]
-        self.image_layer.contrast_limits = (
-            latest_image.min(),
-            latest_image.max(),
-        )
-
     def _update_frame_keys(self) -> None:
         """
         Update sorted list of frame keys (including all 5 dimensions: S, T, M, Z, C).
@@ -2249,6 +2317,10 @@ class StreamingViewer:
                 and not self.frame_data
                 and self._zarr_stream is None
                 and self._zarr_frame_count == 0
+                and not (
+                    self.stream_only_enabled
+                    and self._stream_frames_received > 0
+                )
             ):
                 logger.debug(
                     "No streaming layer, frame data or zarr - stream exists, skipping restructure check"
@@ -2408,9 +2480,10 @@ class StreamingViewer:
         self.signals.experiment_finished.emit()
 
     async def perform_restructure(self) -> None:
-        """Convert the streaming layer into STZYX scene mosaics.
+        """Finish a preview or convert stored frames into STZYX mosaics.
 
-        Called at the end of a display-mode acquisition to
+        Stream-only viewing flushes its preview and keeps the final 2D frame.
+        Otherwise, called at the end of a display-mode acquisition to
         restructure the single streaming array into separate 5D layers
         (one per channel), merging each scene's M tiles spatially.
 
@@ -2424,6 +2497,18 @@ class StreamingViewer:
         - Higher M indices overwrite lower M indices in overlaps
         - Proper dimension labels for navigation
         """
+        if self.stream_only_enabled:
+            async with self.processing_lock:
+                await self._process_buffer()
+            self.is_streaming = False
+            self._restructure_completed_at = time.time()
+            self.signals.update_progress.emit(-2, 0)
+            logger.info(
+                "Stream-only display finished; keeping the last frame "
+                "without scene assembly"
+            )
+            return
+
         logger.debug("Starting restructure process...")
         self.is_streaming = False
         self._restructure_completed_at = time.time()
@@ -2518,11 +2603,8 @@ class StreamingViewer:
                 channel_frames,
                 tile_geometries,
             )
-            first_image = channel_frames[0][4]
-
             channel_data[channel_idx] = {
                 "data": data_array,
-                "first_image": first_image,
                 "name": f"Channel {channel_idx}",
             }
 
@@ -2546,7 +2628,6 @@ class StreamingViewer:
         Args:
             channel_data: Dictionary mapping channel_idx to dict containing:
                          'data': 5D STZYX numpy array
-                         'first_image': first frame for contrast limits
                          'name': layer name
 
         Thread Safety:
@@ -2609,8 +2690,8 @@ class StreamingViewer:
                     data["data"],
                     name=data["name"],
                     contrast_limits=(
-                        data["first_image"].min(),
-                        data["first_image"].max(),
+                        data["data"].min(),
+                        data["data"].max(),
                     ),
                     colormap="gray",
                     scale=layer_scale,
@@ -2927,6 +3008,12 @@ class StreamingViewer:
 
         self._zarr_stream.__exit__(None, None, None)
         self._zarr_stream = None
+        if self._zarr_path is not None:
+            from napari_zen_streaming.ZEN_omezarr import (
+                finalize_omezarr_output,
+            )
+
+            finalize_omezarr_output(self._zarr_path)
         self._last_zarr_path = self._zarr_path
         logger.info(f"OME-ZARR stream closed: {self._zarr_path}")
 

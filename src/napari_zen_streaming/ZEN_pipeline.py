@@ -25,11 +25,7 @@ from zen_api.acquisition.v1beta import (
 from napari_zen_streaming.ZEN_config import ZENConfig
 from napari_zen_streaming.ZEN_init import ExperimentContext, ZENConnection
 from napari_zen_streaming.ZEN_ui import StreamingViewer
-from napari_zen_streaming.ZEN_utils import (
-    extract_image_data,
-    extract_metadata,
-    process_frame,
-)
+from napari_zen_streaming.ZEN_utils import process_frame
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +339,7 @@ class StreamingPipeline:
 
         Processing pipeline for each frame:
         1. Wait for frame from queue (with timeout to check stop event)
-        2. Extract and normalize image data using process_frame()
+        2. Decode native image data and metadata using process_frame()
         3. Send to viewer for display
         4. Mark queue item as done
 
@@ -364,22 +360,7 @@ class StreamingPipeline:
                     continue
 
                 try:
-                    # Process the frame: extract image data and metadata.
-                    # In zarr-write mode, skip display normalisation to
-                    # preserve the original pixel values for OME-ZARR.
-                    if getattr(self.viewer, "_zarr_write_mode", False):
-                        metadata = extract_metadata(response)
-                        display_image = extract_image_data(
-                            response,
-                            self.config.pixel_dtype,
-                            metadata.shape,
-                        )
-                    else:
-                        display_image, metadata = process_frame(
-                            response,
-                            self.config.pixel_dtype,
-                            self.config.display_dtype,
-                        )
+                    display_image, metadata = process_frame(response)
 
                     # Update viewer with processed frame
                     # This updates the 7D streaming layer during acquisition

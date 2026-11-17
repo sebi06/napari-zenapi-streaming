@@ -15,7 +15,19 @@ It supports three workflows selectable from the plugin UI:
   using the standalone writer.
 
 Display workflows use the same live reader and restructure received frames
-into per-channel scene mosaics. Channel labels are 1-based; the ZEN API filter
+into per-channel scene mosaics. Native GRAY8/GRAY16 pixel types and intensities
+are preserved in both the live preview and final mosaics, without per-tile
+normalization. Final layers use one contrast range per channel across the
+whole mosaic; napari's contrast controls change only rendering, not pixel
+values. No dtype setting or source-code edit is needed.
+Enable **Stream only (no history or mosaic)** in either Display workflow
+to view arriving frames without retaining an acquisition or assembling a
+final image. Only the newest frame in each UI update batch is rendered,
+and the final frame stays visible when streaming stops. The existing
+channel filter works in this mode, including changes while streaming.
+The option is locked during an acquisition; by default it is off, preserving
+the normal final-mosaic workflow. It does not write an OME-ZARR file.
+Channel labels are 1-based; the ZEN API filter
 uses zero-based indices. The filter defaults to All channels when a
 previously selected channel is not available in the new mode or experiment.
 
@@ -36,6 +48,11 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
 
 ## Known limitations
 
+- OME-ZARR readers require released format version **0.6 or newer**, as
+  supported by the installed reader. New output is finalized as **0.6**,
+  including images, collections, HCS wells, retained source tiles, and
+  pyramids. Older acquisitions are rejected with an explicit conversion
+  message; they are never upgraded automatically when opened.
 - ZEN Blue and the ZEN API Gateway are required for live acquisition.
   Automated tests use simulated responses; they do not establish end-to-end
   throughput or frame completeness on real hardware. ZEN Blue and its gateway
@@ -49,7 +66,8 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
   pixel types are not supported by that output path.
 - ZEN-started Display mode monitors the global pixel stream without a known
   experiment ID; run only one acquisition at a time in this mode.
-- Display mode retains received frames in memory for final scene assembly.
+- Display mode retains received frames in memory for final scene assembly,
+  unless **Stream only (no history or mosaic)** is enabled.
   Very large or long acquisitions may exceed available RAM; the standalone
   unconfigured `--experiment` CLI mode also buffers the acquisition.
 - Out-of-order OME-ZARR frames use a bounded pending buffer. If the stream
@@ -57,9 +75,8 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
   skipped rather than recovered from ZEN. The configured writer retains the
   partial store, writes `acquisition_status.json`, and reports failure
   instead of success. Inspect the report before using partial output.
-- Display mode currently assumes `uint16` input and normalizes every frame
-  for preview. Its restructured layers are not raw quantitative image data.
-  Use configured OME-ZARR output to retain raw GRAY8/GRAY16 intensities.
+- Display mode accepts only 2D `GRAY8` and `GRAY16` frames. Retaining native
+  `uint16` pixels uses twice the frame-storage memory of an 8-bit preview.
 
 ## Features
 
@@ -74,10 +91,18 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
   selected experiment XML. Changing the selection refreshes these values.
 - OME-ZARR dtype is derived from the runtime frame `PixelType`; the raw
   payload size is checked before decoding.
+- The streaming backend's temporary metadata is converted to the OME-Zarr
+  0.6 coordinate-system schema and validated before acquisition completion
+  is reported. This metadata-only finalization preserves acquired pixels;
+  merely changing version labels is not sufficient.
 - Incoming frames are assigned from live stream metadata. In particular,
   `FramePosition.s` and `FramePosition.m` select the scene and tile; frame
   arrival order and XML TileRegion order are not used for assignment.
 - Thread-safe napari updates via Qt signals/slots.
+- Scrollable experiment controls keep settings accessible in smaller docks.
+- Completed OME-ZARR collections open their advertised scene images directly
+  in napari, without requiring companion OME-XML. Reader-provided channel
+  splitting, pyramids, scales, and axis labels are preserved.
 - Configurable startup and timeout behavior from `.env` or CLI.
 
 ## Repository layout
@@ -111,6 +136,8 @@ docs/
 - Access to the ZEN API certificate (`ZenApiPersonalSigningRootCA.pem`)
 - Python 3.12-3.14 with Qt >=6.7; PyQt6 is used in CI. PyQt5 is not
   compatible with napari 0.10 or newer.
+- `ngff-zarr>=0.51.0` for released OME-Zarr 0.6 metadata conversion,
+  validation, and pyramid generation.
 - Authorized, compatible `zen_api` and `zen_api_utils` wheels from
   [ZEISS OAD](https://github.com/zeiss-microscopy/OAD/tree/master/ZEN-API)
   (neither package is distributed on PyPI)
