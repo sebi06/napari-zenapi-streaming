@@ -102,11 +102,11 @@ class ZENApplication:
         self.setup_viewer(experiments)
 
     async def run(self) -> None:
-        """Run pipeline until viewer is closed."""
+        """Run pipeline until the plugin dock or viewer is closed."""
         logger.debug("Starting application")
         try:
             async with self.pipeline:
-                while True:
+                while not self.viewer.closed.is_set():
                     try:
                         if not self.viewer.viewer.window._qt_window.isVisible():
                             break
@@ -121,6 +121,8 @@ class ZENApplication:
 
     async def cleanup(self) -> None:
         logger.debug("Cleaning up application")
+        if self.viewer:
+            await self.viewer.shutdown()
         if self.viewer and not self.embedded:
             try:
                 self.viewer.close()

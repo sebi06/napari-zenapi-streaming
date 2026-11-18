@@ -35,12 +35,15 @@ def test_experiment_controls_scroll_when_dock_is_small(
 ) -> None:
     """All controls remain reachable, and scrollbars hide when content fits."""
     docks = []
+
+    def add_dock(widget, **kwargs):
+        docks.append(widget)
+        return widget
+
     monkeypatch.setattr(
         "napari_zen_streaming.ZEN_ui.napari.current_viewer",
         lambda: SimpleNamespace(
-            window=SimpleNamespace(
-                add_dock_widget=lambda widget, **kwargs: docks.append(widget)
-            )
+            window=SimpleNamespace(add_dock_widget=add_dock)
         ),
     )
     gateway_config = tmp_path / "config.ini"

@@ -423,6 +423,9 @@ python -m napari_zen_streaming.main --ui-start true \
 
 The plugin UI exposes three stream modes. Connecting the plugin never starts
 an acquisition; only clicking Start in a start-capable mode does so.
+Closing the **Experiment Selector** dock stops its stream subscriptions and
+background tasks without stopping the acquisition in ZEN or closing napari.
+Open the plugin again to establish a new connection.
 
 #### Display: watch ZEN experiment (index 0)
 
@@ -433,6 +436,8 @@ The channel filter offers All channels or labels 1-16 (ZEN indices 0-15).
 #### Display: start selected experiment (index 1)
 
 The Start button loads and triggers the selected experiment via the ZEN API.
+This mode does not subscribe to the pixel stream until Start is clicked, and
+returns to an unsubscribed idle state after the acquisition is finalized.
 Its XML dimensions are shown in the widget, and the channel filter offers All
 channels or exactly the channels available in that setup. Until metadata has
 loaded, only All channels is available. Changing the selected setup reloads
@@ -453,8 +458,9 @@ Both Display modes use the full async streaming pipeline (`ZEN_pipeline.py`):
    is frozen during acquisition and re-enabled after completion.
    Stream-only viewing forces the latest-frame preview, retains no history,
    and leaves the last frame visible without assembling a mosaic.
-2. **Channel filter** – Changing the filter immediately restarts the pipeline
-   reader. Labels are 1-based, while the gRPC request uses zero-based indices.
+2. **Channel filter** – Changing the filter restarts an active pipeline reader
+   but does not open a stream in an idle start-selected mode. Labels are
+   1-based, while the gRPC request uses zero-based indices.
    The initial value comes from `ZEN_CHANNEL_INDEX` in `.env`; leave it empty
    to receive all channels. An out-of-range choice resets to All channels.
 3. **Completion detection** –
@@ -471,15 +477,16 @@ Both Display modes use the full async streaming pipeline (`ZEN_pipeline.py`):
    5D layers (`S, T, Z, Y, X`). In overlap regions, pixels from the tile with
    the higher M index replace pixels from lower-M tiles.
 
-**Experiment identity:** Display mode keeps one
+**Experiment identity:** While watching or acquiring, Display mode keeps one
 `monitor_all_experiments()` subscription open because the targeted ZEN stream
 can close when experiment status changes to finished, before trailing pixel
 payloads have arrived. For a Napari-started acquisition, the plugin loads the
 experiment first, arms a client-side filter for its `FrameData.experiment_id`,
 and only then starts acquisition. Frames from other experiments are ignored
 while that filter is active, including during trailing-frame drain. The filter
-is cleared after final restructure so later ZEN-started acquisitions remain
-discoverable. A ZEN-started run has no experiment ID known in advance and
+is cleared and the subscription is closed after final restructure. Switch to
+**Display: watch ZEN experiment** to discover independently started runs.
+A ZEN-started run has no experiment ID known in advance and
 therefore continues to accept the global stream; keep only one such
 acquisition active at a time.
 

@@ -92,9 +92,11 @@ class StreamingPipeline:
         # and the standalone OME-ZARR writer only receives half of them.
         self._reader_iter: Any = None
         self._reader_ready = asyncio.Event()
+        self._reader_lock = asyncio.Lock()
 
         # Napari-started runs use the perpetual all-experiments transport but
-        # accept only frames carrying this ID. None preserves ZEN-started mode.
+        # accept only frames carrying this ID. None accepts frames in watch
+        # mode only.
         self._target_experiment_id: str | None = None
 
         # Processor task processes frames and updates viewer
@@ -109,16 +111,13 @@ class StreamingPipeline:
         """
         Start the streaming pipeline.
 
-        Creates and starts two concurrent tasks:
-        1. Reader task: Pulls frames from ZEN API
-        2. Processor task: Processes frames from queue
-
-        Both tasks run concurrently until stop() is called.
+        Start the processor and, in watch mode, the pixel reader. Selected
+        acquisition modes open their reader only when explicitly armed.
         """
         logger.debug("Starting streaming pipeline")
 
-        # Start reader and processor tasks concurrently
-        self.reader_task = asyncio.create_task(self._read_frames())
+        # Selected-experiment modes stay disconnected until explicitly armed.
+        await self.resume_reader()
         self.processor_task = asyncio.create_task(self._process_frames())
 
         logger.debug("Pipeline started - reader and processor tasks running")
@@ -139,13 +138,8 @@ class StreamingPipeline:
         # Signal all tasks to stop
         self.stop_event.set()
 
-        # Cancel reader task (blocking on ZEN API async iterator)
-        if self.reader_task:
-            self.reader_task.cancel()
-            try:
-                await self.reader_task
-            except asyncio.CancelledError:
-                logger.debug("Reader task cancelled successfully")
+        # Serialize shutdown with any pending mode or channel change.
+        await self.suspend_reader()
 
         # Wait for queue to empty (process remaining frames)
         if self.queue:
@@ -298,12 +292,35 @@ class StreamingPipeline:
 
     def _accepts_response(self, response: Any) -> bool:
         """Return whether a streamed frame matches the active target."""
+        if not self.reader_enabled:
+            return False
         target = self._target_experiment_id
         return target is None or response.frame_data.experiment_id == target
+
+    @property
+    def reader_enabled(self) -> bool:
+        """Allow passive watching or one explicitly armed display run."""
+        return (
+            not self.stop_event.is_set()
+            and not self.viewer.closed.is_set()
+            and not self.viewer._standalone_zarr_active
+            and (
+                self.viewer.watch_enabled
+                or self._target_experiment_id is not None
+            )
+        )
+
+    async def refresh_reader(self) -> None:
+        """Apply mode and channel changes without arming an idle reader."""
+        async with self._reader_lock:
+            await self._suspend_reader()
+            self._resume_reader()
 
     async def ensure_reader_ready(self) -> None:
         """Ensure the perpetual all-experiments stream is armed."""
         await self.resume_reader()
+        if not self.reader_enabled:
+            raise RuntimeError("Pixel stream is not armed or has been closed")
         await self._reader_ready.wait()
 
     async def start_targeted_experiment(
@@ -313,23 +330,23 @@ class StreamingPipeline:
     ) -> str:
         """Prepare, filter, and start one napari-triggered experiment.
 
-        The all-experiments stream is opened first for reliable trailing-frame
-        delivery. ZEN then loads the experiment, the client-side ID filter is
-        armed, and only then is acquisition started.
+        Load the experiment and arm its ID filter before opening the global
+        stream. Keep that stream open through trailing-frame delivery.
         """
-        await self.ensure_reader_ready()
         experiment_id = await self.connection.prepare_experiment(
             experiment_name,
             overwrite=overwrite,
         )
         self.set_target_experiment(experiment_id)
         try:
+            await self.ensure_reader_ready()
             await self.connection.start_loaded_experiment(
                 experiment_id,
                 experiment_name,
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             self.set_target_experiment(None)
+            await self.suspend_reader()
             raise
         return experiment_id
 
@@ -429,6 +446,11 @@ class StreamingPipeline:
 
         Safe to call when no reader is running (no-op).
         """
+        async with self._reader_lock:
+            await self._suspend_reader()
+
+    async def _suspend_reader(self) -> None:
+        """Close the current reader while holding the lifecycle lock."""
         if self.reader_task and not self.reader_task.done():
             self.reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -451,6 +473,14 @@ class StreamingPipeline:
         the next experiment in Display mode.  Safe to call when the reader
         is already running (no-op).
         """
+        async with self._reader_lock:
+            self._resume_reader()
+
+    def _resume_reader(self) -> None:
+        """Open an eligible reader while holding the lifecycle lock."""
+        if not self.reader_enabled:
+            logger.debug("Pixel reader remains idle")
+            return
         if self.reader_task and not self.reader_task.done():
             logger.debug("Pipeline reader already running – skipping resume")
             return
