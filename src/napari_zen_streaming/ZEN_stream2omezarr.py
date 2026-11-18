@@ -101,6 +101,7 @@ from napari_zen_streaming.ZEN_omezarr import (
     open_in_ndv_viewer,
     start_experiment,
     validate_omezarr_version,
+    write_omezarr_channel_metadata,
 )
 from napari_zen_streaming.ZEN_utils import (
     _decode_grayscale_frame,
@@ -695,6 +696,11 @@ def generate_omezarr_pyramids(
         f"{len(image_paths)} image(s) ..."
     )
     for image_index, image_path in enumerate(image_paths, start=1):
+        image_group = zarr.open_group(
+            image_path, mode="a", use_consolidated=False
+        )
+        image_attributes: dict[str, Any] = dict(image_group.attrs)
+        omero = image_attributes.get("ome", {}).get("omero")
         existing = nz.from_ngff_zarr(image_path, validate=True)
         base_image = existing.images[0]
         if not {"y", "x"}.issubset(base_image.dims):
@@ -733,6 +739,17 @@ def generate_omezarr_pyramids(
             start_level=1,
             chunks_per_shard=chunks_per_shard,
         )
+        # to_multiscales creates fresh metadata; retain the exact display
+        # settings, including fields outside ngff-zarr's OMERO dataclasses.
+        if omero is not None:
+            image_group = zarr.open_group(
+                image_path, mode="a", use_consolidated=False
+            )
+            image_attributes = dict(image_group.attrs)
+            image_group.attrs["ome"] = {
+                **image_attributes["ome"],
+                "omero": omero,
+            }
         logger.info(
             f"Pyramid image {image_index}/{len(image_paths)} complete: "
             f"{image_path}"
@@ -2020,6 +2037,9 @@ async def _stream_to_omezarr_with_config_connected(
             )
 
     finalize_omezarr_output(zarr_path)
+    write_omezarr_channel_metadata(
+        zarr_path, ecfg.channel_metadata, source_channels
+    )
     missing_coordinates = [
         coordinate
         for coordinate, index in coord_to_linear.items()
@@ -2189,6 +2209,7 @@ async def _run_configured_experiment(
     ecfg.tiles = acquisition.tiles
     ecfg.scenes = acquisition.scenes
     ecfg.positions = list(acquisition.positions)
+    ecfg.channel_metadata = acquisition.channel_metadata
     return await stream_to_omezarr_with_config(
         ecfg, inactivity_timeout=inactivity_timeout
     )

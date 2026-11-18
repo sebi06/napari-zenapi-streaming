@@ -585,6 +585,17 @@ and **Create pyramid after acquisition** in its UI. When enabled, choose how
 many 2x Y/X downsampled levels to append after acquisition completes. Napari
 opens the OME-Zarr only after pyramid generation finishes. Existing level `0`
 is reused and is never rewritten.
+Active channel names and display colors come from the selected experiment's
+exported XML, in the same order as the channel subscriptions. ZEN's
+`#AARRGGBB` colors are saved as OMERO `RRGGBB` colors on every image
+(including HCS wells and retained source tiles), with display limits from
+the runtime pixel type. Selecting a single channel retains that source
+channel's name and color. Pyramid generation preserves these settings, so
+`napari-ome-zarr` automatically opens the images with their ZEN colors.
+Missing or invalid XML colors produce a warning and use neutral grayscale,
+not an inferred fluorophore color. Direct writer configurations without
+channel metadata keep the previous reader-default behavior.
+
 Generic scene mosaics also expose **Keep individual source tiles**; unchecked
 removes source groups only after mosaic creation succeeds. Advanced values
 intentionally use fixed defaults declared at the top of `ZEN_omezarr.py`:

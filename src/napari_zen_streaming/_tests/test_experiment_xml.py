@@ -8,9 +8,76 @@ import pytest
 
 from napari_zen_streaming import ZEN_stream2omezarr as streamer
 from napari_zen_streaming.ZEN_omezarr import (
+    ExperimentChannelMetadata,
+    load_experiment_acquisition,
     load_experiment_config,
     parse_experiment_xml,
 )
+
+
+def test_exported_active_channel_names_and_colors(caplog) -> None:
+    """Track/channel filtering keeps exact ZEN names and ARGB-derived RGB."""
+    xml = """
+    <Experiment><ExperimentBlocks>
+      <AcquisitionBlock IsActivated="false">
+        <MultiTrackSetup><Track><Channels>
+          <Channel Name="Other"><Color>#FFFFFFFF</Color></Channel>
+        </Channels></Track></MultiTrackSetup>
+      </AcquisitionBlock>
+      <AcquisitionBlock IsActivated="true"><MultiTrackSetup>
+        <Track IsActivated="true"><Channels>
+          <Channel Name="AF568"><Color>#FFFF1800</Color></Channel>
+          <Channel Name="DAPI" IsActivated="false">
+            <Color>#FF00A1FF</Color>
+          </Channel>
+        </Channels></Track>
+        <Track IsActivated="false"><Channels>
+          <Channel Name="Inactive"><Color>#FFFFFFFF</Color></Channel>
+        </Channels></Track>
+        <Track><Channels>
+          <Channel Name="AF488"><Color>#ff00ff33</Color></Channel>
+        </Channels></Track>
+      </MultiTrackSetup></AcquisitionBlock>
+    </ExperimentBlocks></Experiment>
+    """
+
+    class Service:
+        async def load(self, request):
+            assert request.experiment_name == "Selected experiment"
+            return SimpleNamespace(experiment_id="selected-id")
+
+        async def export(self, request):
+            assert request.experiment_id == "selected-id"
+            return SimpleNamespace(xml=xml)
+
+    metadata = asyncio.run(
+        load_experiment_acquisition(Service(), "Selected experiment")
+    )
+
+    assert metadata.channels == 2
+    assert metadata.channel_metadata == (
+        ExperimentChannelMetadata("AF568", "FF1800"),
+        ExperimentChannelMetadata("AF488", "00FF33"),
+    )
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("color", ["", "<Color>invalid</Color>"])
+def test_missing_channel_color_does_not_invent_biological_color(
+    color: str, caplog
+) -> None:
+    """Missing/invalid colors retain names and explicitly warn of grayscale."""
+    xml = f"""
+    <Experiment><ExperimentBlocks><AcquisitionBlock><MultiTrackSetup>
+      <Track><Channels><Channel Name="Unknown">{color}</Channel></Channels>
+      </Track>
+    </MultiTrackSetup></AcquisitionBlock></ExperimentBlocks></Experiment>
+    """
+    metadata = parse_experiment_xml(xml)
+    assert metadata.channel_metadata == (
+        ExperimentChannelMetadata("Unknown", None),
+    )
+    assert "neutral grayscale" in caplog.text
 
 
 def test_tile_regions_map_to_scenes_and_per_scene_tiles() -> None:
@@ -180,6 +247,11 @@ def test_configured_cli_exports_dimensions_before_streaming(
         tiles=2,
         scenes=2,
         positions=positions,
+        channel_metadata=(
+            ExperimentChannelMetadata("AF568", "FF1800"),
+            ExperimentChannelMetadata("AF488", "00FF33"),
+            ExperimentChannelMetadata("DAPI", "00A1FF"),
+        ),
     )
     monkeypatch.setattr(
         streamer, "initialize_zenapi", lambda path: (Channel(), object())
@@ -206,6 +278,7 @@ def test_configured_cli_exports_dimensions_before_streaming(
         ) == (2, 3, 4, 2, 2)
         assert ecfg.z_spacing == 0.5
         assert ecfg.positions == list(positions)
+        assert ecfg.channel_metadata == acquisition.channel_metadata
         assert closed == [True]
         return tmp_path / "output.ome.zarr"
 

@@ -116,7 +116,10 @@ def finalize_omezarr_output(zarr_path: Path) -> None:
         converted_ome = converted.attrs["ome"]
         if not isinstance(converted_ome, Mapping):
             raise ValueError(f"Invalid converted OME-Zarr metadata: {path}")
-        converted.attrs.update({**attributes, "ome": {**ome, **converted_ome}})
+        merged_ome = {**ome, **converted_ome}
+        if "omero" in ome:
+            merged_ome["omero"] = ome["omero"]
+        converted.attrs.update({**attributes, "ome": merged_ome})
         nz.from_ngff_zarr(path, validate=True, kind="multiscales")
         image_count += 1
     if not image_count:
@@ -133,6 +136,14 @@ def finalize_omezarr_output(zarr_path: Path) -> None:
     logger.info(
         "Finalized OME-Zarr %s output: %s", OME_ZARR_VERSION, zarr_path
     )
+
+
+@dataclass(frozen=True)
+class ExperimentChannelMetadata:
+    """Display metadata for one active ZEN channel in subscription order."""
+
+    name: str | None = None
+    color: str | None = None
 
 
 @dataclass
@@ -166,6 +177,7 @@ class ExperimentConfig:
     spatial_shard_size_chunks: int | None = 2
     max_pending_frames: int = 4096
     pyramid_levels: int = 0
+    channel_metadata: tuple[ExperimentChannelMetadata, ...] = ()
 
 
 def create_plugin_experiment_config(
@@ -224,7 +236,7 @@ def create_plugin_experiment_config(
 
 @dataclass(frozen=True)
 class ExperimentAcquisitionMetadata:
-    """Acquisition dimensions and positions exported from a ZEN experiment."""
+    """Dimensions, positions, and active channels exported by ZEN."""
 
     experiment_name: str
     time_points: int
@@ -234,6 +246,7 @@ class ExperimentAcquisitionMetadata:
     tiles: int
     scenes: int
     positions: tuple[dict[str, object], ...] = ()
+    channel_metadata: tuple[ExperimentChannelMetadata, ...] = ()
 
 
 def _xml_is_active(element: ET.Element | None, default: bool = True) -> bool:
@@ -469,11 +482,38 @@ def _parse_xml_tile_layout(block: ET.Element) -> tuple[int, int]:
     return max(tile_counts), len(tile_counts)
 
 
+def _extract_xml_channels(
+    block: ET.Element,
+) -> tuple[ExperimentChannelMetadata, ...]:
+    """Read active track/channel names and ZEN ARGB colors in stream order."""
+    channels = []
+    for track in block.findall(".//MultiTrackSetup/Track"):
+        if not _xml_is_active(track):
+            continue
+        for channel in track.findall("./Channels/Channel"):
+            if not _xml_is_active(channel):
+                continue
+            name = channel.get("Name") or None
+            value = _xml_text(channel, "Color")
+            color = None
+            if value is not None and re.fullmatch(r"#[0-9A-Fa-f]{8}", value):
+                color = value[3:].upper()
+            else:
+                logger.warning(
+                    "Active channel %s has missing or invalid ZEN ARGB "
+                    "Color %r; OME-Zarr display will use neutral grayscale.",
+                    name or len(channels),
+                    value,
+                )
+            channels.append(ExperimentChannelMetadata(name, color))
+    return tuple(channels)
+
+
 def parse_experiment_xml(
     xml: str,
     experiment_name: str = "<experiment-export>",
 ) -> ExperimentAcquisitionMetadata:
-    """Parse acquisition dimensions from a ZEN ``.czexp`` XML document."""
+    """Parse acquisition and channel metadata from ZEN ``.czexp`` XML."""
     root = ET.fromstring(xml)
     blocks = root.findall("./ExperimentBlocks/AcquisitionBlock")
     active_blocks = [block for block in blocks if _xml_is_active(block)]
@@ -486,13 +526,7 @@ def parse_experiment_xml(
     time_setup = _find_active_dimension_setup(block, "TimeSeriesSetup")
     time_points = max(1, _xml_int(time_setup, "Duration/Cycles"))
 
-    channels = sum(
-        1
-        for track in block.findall(".//MultiTrackSetup/Track")
-        if _xml_is_active(track)
-        for channel in track.findall("./Channels/Channel")
-        if _xml_is_active(channel)
-    )
+    channel_metadata = _extract_xml_channels(block)
 
     z_setup = _find_active_dimension_setup(block, "ZStackSetup")
     first = _xml_float(z_setup, "First/Distance/Value")
@@ -511,13 +545,69 @@ def parse_experiment_xml(
     return ExperimentAcquisitionMetadata(
         experiment_name=experiment_name,
         time_points=time_points,
-        channels=max(1, channels),
+        channels=max(1, len(channel_metadata)),
         z_planes=z_planes,
         z_spacing=z_spacing,
         tiles=tiles,
         scenes=scenes,
         positions=positions,
+        channel_metadata=channel_metadata,
     )
+
+
+def write_omezarr_channel_metadata(
+    zarr_path: Path,
+    channels: tuple[ExperimentChannelMetadata, ...],
+    source_channels: list[int],
+) -> None:
+    """Persist OMERO display settings on every final and retained image.
+
+    Source indices are the explicit subscriptions, not XML channel IDs or
+    frame C values. Only array metadata is read; intensities are unchanged.
+    """
+    import numpy as np
+    import zarr
+
+    if not channels:
+        return
+    if any(index < 0 or index >= len(channels) for index in source_channels):
+        raise ValueError("Selected stream channel has no experiment metadata")
+    selected = [channels[index] for index in source_channels]
+    for path, group in _omezarr_groups(zarr_path):
+        attributes: dict[str, Any] = dict(group.attrs)
+        ome = attributes.get("ome", {})
+        if not isinstance(ome, Mapping) or not ome.get("multiscales"):
+            continue
+        dataset = ome["multiscales"][0]["datasets"][0]["path"]
+        array = group[dataset]
+        if not isinstance(array, zarr.Array):
+            raise ValueError(f"Image dataset is not an array: {path}")
+        limits = np.iinfo(array.dtype)
+        display_channels = []
+        for source_index, channel in zip(
+            source_channels, selected, strict=True
+        ):
+            display_channels.append(
+                {
+                    "label": channel.name or f"channel_{source_index}",
+                    "color": channel.color or "FFFFFF",
+                    "active": True,
+                    "window": {
+                        "min": int(limits.min),
+                        "max": int(limits.max),
+                        "start": int(limits.min),
+                        "end": int(limits.max),
+                    },
+                }
+            )
+        writable = zarr.open_group(path, mode="a", use_consolidated=False)
+        writable.attrs["ome"] = {
+            **ome,
+            "omero": {
+                "channels": display_channels,
+                "rdefs": {"model": "color"},
+            },
+        }
 
 
 def parse_experiment_file(

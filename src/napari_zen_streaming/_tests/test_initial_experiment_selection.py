@@ -9,7 +9,10 @@ import pytest
 
 from napari_zen_streaming import ZEN_stream2omezarr, _widget, main
 from napari_zen_streaming.ZEN_config import ZENConfig
-from napari_zen_streaming.ZEN_omezarr import create_plugin_experiment_config
+from napari_zen_streaming.ZEN_omezarr import (
+    ExperimentChannelMetadata,
+    create_plugin_experiment_config,
+)
 from napari_zen_streaming.ZEN_ui import StreamingViewer
 
 
@@ -324,6 +327,10 @@ def test_start_refreshes_selected_experiment_before_acquisition(
         tiles=1,
         scenes=1,
         positions=[],
+        channel_metadata=tuple(
+            ExperimentChannelMetadata(f"ZEN channel {index}", "00FF33")
+            for index in range(5)
+        ),
     )
     events: list[str] = []
 
@@ -381,6 +388,10 @@ def test_start_refreshes_selected_experiment_before_acquisition(
     if mode == 2:
         assert writer.await_args.args[0].channels == 5
         assert writer.await_args.args[0].time_points == 3
+        assert (
+            writer.await_args.args[0].channel_metadata
+            == fresh.channel_metadata
+        )
         assert callable(writer.await_args.kwargs["on_experiment_started"])
         assert viewer.current_experiment_id is None
 

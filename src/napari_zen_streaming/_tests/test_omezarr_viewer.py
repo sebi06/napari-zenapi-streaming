@@ -9,12 +9,71 @@ import pytest
 import zarr
 
 from napari_zen_streaming.ZEN_omezarr import (
+    ExperimentChannelMetadata,
     open_in_napari_viewer,
     read_omezarr_axis_names,
     read_omezarr_axis_scales,
+    write_omezarr_channel_metadata,
 )
+from napari_zen_streaming.ZEN_stream2omezarr import generate_omezarr_pyramids
 
 reader = pytest.importorskip("napari_ome_zarr.ome_zarr_reader")
+
+
+@pytest.mark.parametrize("source_channels", [[0, 1], [1]])
+@pytest.mark.parametrize("missing_color", [False, True])
+def test_reader_uses_persisted_channel_colors_after_pyramids(
+    tmp_path: Path, source_channels: list[int], missing_color: bool
+) -> None:
+    """The real napari reader gets names/colors without viewer overrides."""
+    from napari.utils.colormaps import ensure_colormap
+
+    channels = (
+        ExperimentChannelMetadata("AF568", "FF1800"),
+        ExperimentChannelMetadata(
+            "AF488", None if missing_color else "00FF33"
+        ),
+    )
+    shape = (2, 8, 8) if len(source_channels) == 2 else (8, 8)
+    dims = ("c", "y", "x") if len(source_channels) == 2 else ("y", "x")
+    image = nz.to_ngff_image(
+        np.full(shape, 3100, dtype=np.uint16),
+        dims=dims,
+        name="scene",
+    )
+    path = tmp_path / "colored.ome.zarr"
+    multiscales = nz.to_multiscales(image, scale_factors=[])
+    dataset = multiscales.metadata.datasets[0]
+    dataset.path = "0"
+    for transform in dataset.coordinateTransformations:
+        if transform.input is not None:
+            transform.input.path = "0"
+    nz.to_ome_zarr(
+        path,
+        multiscales,
+        version="0.6",
+    )
+    write_omezarr_channel_metadata(path, channels, source_channels)
+    original_omero = zarr.open_group(path).attrs["ome"]["omero"]
+
+    generate_omezarr_pyramids(path, 1, None)
+
+    assert zarr.open_group(path).attrs["ome"]["omero"] == original_omero
+    layer_data = reader.read_ome_zarr(zarr.open_group(path, mode="r"))()
+    assert len(layer_data) == len(source_channels)
+    for (pyramid, props, kind), source_index in zip(
+        layer_data, source_channels, strict=True
+    ):
+        channel = channels[source_index]
+        assert kind == "image"
+        assert [array.shape for array in pyramid] == [(8, 8), (4, 4)]
+        assert props["name"].endswith(channel.name)
+        color = channel.color or "FFFFFF"
+        expected = [int(color[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+        colormap = ensure_colormap(props["colormap"])
+        np.testing.assert_allclose(colormap.map([1.0])[0, :3], expected)
+        assert props["contrast_limits"] == [0, 65535]
+        assert props["visible"]
 
 
 def _create_image(root_path: Path, name: str) -> None:

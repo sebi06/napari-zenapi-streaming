@@ -22,6 +22,7 @@ from napari_zen_streaming._scene_geometry import (
 from napari_zen_streaming.ZEN_omezarr import (
     ExperimentConfig,
     finalize_omezarr_output,
+    parse_experiment_xml,
 )
 from napari_zen_streaming.ZEN_stream2omezarr import (
     _assemble_scene_mosaics,
@@ -78,6 +79,123 @@ def test_well_layout_can_be_written_as_hcs() -> None:
 
     assert plate is not None
     assert len(positions) == 2
+
+
+@pytest.mark.parametrize("hcs", [False, True])
+@pytest.mark.parametrize("channel_index", [None, 1])
+def test_configured_stream_writes_channel_display_metadata(
+    tmp_path: Path, monkeypatch, hcs: bool, channel_index: int | None
+) -> None:
+    """Real writer retains XML channel order for scenes, HCS, and subsets."""
+    xml = """
+    <Experiment><ExperimentBlocks><AcquisitionBlock><MultiTrackSetup>
+      <Track><Channels>
+        <Channel Name="AF568"><Color>#FFFF1800</Color></Channel>
+        <Channel IsActivated="false" Name="DAPI">
+          <Color>#FF00A1FF</Color>
+        </Channel>
+        <Channel Name="AF488"><Color>#FF00FF33</Color></Channel>
+      </Channels></Track>
+    </MultiTrackSetup></AcquisitionBlock></ExperimentBlocks></Experiment>
+    """
+    acquisition = parse_experiment_xml(xml)
+    config = _experiment_config(use_hcs_layout=hcs)
+    config.output_dir = str(tmp_path)
+    config.channels = acquisition.channels
+    config.channel_metadata = acquisition.channel_metadata
+    config.channel_index = channel_index
+    config.keep_source_tiles = not hcs
+    config.pyramid_levels = 1
+    # GRAY8 must set display limits from the stream, not this fallback.
+    config.dtype = "uint16"
+
+    class Channel:
+        def close(self):
+            pass
+
+    class ExperimentService:
+        async def get_status(self, _request):
+            raise GRPCError(
+                Status.FAILED_PRECONDITION, "No experiment is running"
+            )
+
+    class StreamingService:
+        def monitor_all_experiments(self, request):
+            async def responses():
+                for scene in range(2):
+                    for tile in range(2):
+                        yield SimpleNamespace(
+                            frame_data=SimpleNamespace(
+                                experiment_id="selected",
+                                frame_position=SimpleNamespace(
+                                    t=0,
+                                    z=0,
+                                    m=tile,
+                                    s=scene,
+                                    c=99,
+                                ),
+                                frame_size=SimpleNamespace(width=8, height=8),
+                                pixel_data=SimpleNamespace(
+                                    pixel_type=PixelType.GRAY8,
+                                    raw_data=np.full(
+                                        (8, 8),
+                                        request.channel_index + 11,
+                                        dtype=np.uint8,
+                                    ).tobytes(),
+                                ),
+                                scaling=SimpleNamespace(x=1e-6, y=1e-6),
+                                frame_stage_position=SimpleNamespace(
+                                    x=(3.5 + tile * 8) * 1e-6,
+                                    y=3.5e-6,
+                                    z=0.0,
+                                ),
+                            )
+                        )
+
+            return responses()
+
+    monkeypatch.setattr(
+        stream_module, "initialize_zenapi", lambda _: (Channel(), None)
+    )
+    monkeypatch.setattr(
+        stream_module,
+        "ExperimentServiceStub",
+        lambda **_: ExperimentService(),
+    )
+    monkeypatch.setattr(
+        stream_module,
+        "ExperimentStreamingServiceStub",
+        lambda **_: StreamingService(),
+    )
+    path = asyncio.run(
+        stream_module.stream_to_omezarr_with_config(
+            config, progress_callback=lambda *_: None
+        )
+    )
+    image_paths = stream_module._find_omezarr_image_paths(path)
+    assert len(image_paths) == (6 if not hcs else 2)
+    expected_channels = (
+        config.channel_metadata
+        if channel_index is None
+        else (config.channel_metadata[channel_index],)
+    )
+    for image_path in image_paths:
+        image = zarr.open_group(image_path, mode="r")
+        channels = image.attrs["ome"]["omero"]["channels"]
+        assert [(ch["label"], ch["color"]) for ch in channels] == [
+            (channel.name, channel.color) for channel in expected_channels
+        ]
+        assert all(
+            ch["window"] == {"min": 0, "max": 255, "start": 0, "end": 255}
+            and ch["active"]
+            for ch in channels
+        )
+        assert len(image.attrs["ome"]["multiscales"][0]["datasets"]) == 2
+        pixels = image["0"][:]
+        assert pixels.dtype == np.uint8
+        assert set(np.unique(pixels)) == (
+            {11, 12} if channel_index is None else {12}
+        )
 
 
 def test_output_directory_probe_cleans_up(tmp_path: Path) -> None:
@@ -661,6 +779,24 @@ def test_finalize_output_converts_schema_and_preserves_pixels(
     if not hcs:
         _create_raw_tile(root, 1, 120, path="raw_source")
     root[image_name].attrs["zen_scene"] = {"source_tiles_retained": False}
+    omero = {
+        "channels": [
+            {
+                "label": "AF488",
+                "color": "00FF33",
+                "active": True,
+                "window": {
+                    "min": 0,
+                    "max": 65535,
+                    "start": 120,
+                    "end": 4200,
+                },
+            }
+        ],
+        "rdefs": {"model": "color"},
+    }
+    image_ome = dict(root[image_name].attrs["ome"])
+    root[image_name].attrs["ome"] = {**image_ome, "omero": omero}
     chunks = {
         file.relative_to(path): file.read_bytes()
         for file in path.rglob("*")
@@ -677,6 +813,7 @@ def test_finalize_output_converts_schema_and_preserves_pixels(
     image_path = path / image_name
     image = zarr.open_group(image_path, mode="r")
     assert image.attrs["zen_scene"] == {"source_tiles_retained": False}
+    assert image.attrs["ome"]["omero"] == omero
     multiscale = image.attrs["ome"]["multiscales"][0]
     assert "coordinateSystems" in multiscale
     assert "axes" not in multiscale
@@ -688,6 +825,7 @@ def test_finalize_output_converts_schema_and_preserves_pixels(
     stream_module.generate_omezarr_pyramids(path, 1, None)
 
     reopened = nz.from_ngff_zarr(image_path, validate=True, kind="multiscales")
+    assert zarr.open_group(image_path).attrs["ome"]["omero"] == omero
     assert len(reopened.images) == 2
     assert all(
         level.data.dtype == np.dtype(np.uint16) for level in reopened.images

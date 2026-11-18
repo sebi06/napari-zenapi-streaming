@@ -1498,6 +1498,7 @@ class StreamingViewer:
                         tiles=metadata.tiles,
                         scenes=metadata.scenes,
                         positions=list(metadata.positions),
+                        channel_metadata=metadata.channel_metadata,
                     )
 
                     # Cancel the pipeline's gRPC reader BEFORE opening

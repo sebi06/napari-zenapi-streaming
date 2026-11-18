@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Carry active-channel names and actual ZEN XML colors through plugin and
+  configured CLI OME-Zarr acquisition. Persist per-image OMERO display
+  settings in stream/subset order for generic scenes, HCS wells, and retained
+  source tiles, and preserve them when generating pyramids so
+  `napari-ome-zarr` automatically restores channel colors. Missing or invalid
+  XML colors warn and fall back to neutral grayscale.
+
 ## 0.0.3 - 2026-11-18
 
 ### Fixed
