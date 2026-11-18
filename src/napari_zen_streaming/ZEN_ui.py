@@ -29,13 +29,14 @@ from collections.abc import Callable, Coroutine
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from typing import Any, cast
 
 import napari
 import numpy as np
 from napari import Viewer
 from napari.layers import Image
-from qtpy.QtCore import QObject, QTimer, Signal
+from qtpy.QtCore import QEvent, QObject, QTimer, Signal
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -182,6 +183,23 @@ class ViewerSignals(QObject):
     set_live_preview_option_enabled = Signal(bool)
     acquisition_warning = Signal(str)
     start_button_text = Signal(str)
+    close_progress = Signal()
+
+
+class _DockCloseFilter(QObject):
+    """Notify the worker loop of dock closure without reading Qt there."""
+
+    def __init__(self, dock: QWidget, closed: Event) -> None:
+        super().__init__(dock)
+        self._closed = closed
+        dock.installEventFilter(self)
+        dock.destroyed.connect(closed.set)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Treat closing or deleting the dock as application shutdown."""
+        if event.type() in (QEvent.Close, QEvent.DeferredDelete):
+            self._closed.set()
+        return super().eventFilter(watched, event)
 
 
 class StreamingViewer:
@@ -215,6 +233,9 @@ class StreamingViewer:
             The viewer must be initialized in the Qt main thread.
         """
         self.config = config
+        self.closed = Event()
+        self._action_tasks: set[asyncio.Task[None]] = set()
+        self.processing_task: asyncio.Task | None = None
 
         # Initialize Napari viewer
         _viewer = napari.current_viewer()
@@ -256,6 +277,7 @@ class StreamingViewer:
             self._show_acquisition_warning
         )
         self.signals.start_button_text.connect(self._set_start_button_text)
+        self.signals.close_progress.connect(self._close_progress_bar)
 
         # ========== Layer Management ==========
         # Single streaming layer during acquisition (7D: STMZCYX)
@@ -691,9 +713,10 @@ class StreamingViewer:
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.dropdown_widget)
-        self.viewer.window.add_dock_widget(
+        dock = self.viewer.window.add_dock_widget(
             self.scroll_area, name="Experiment Selector", area="right"
         )
+        self._dock_close_filter = _DockCloseFilter(dock, self.closed)
 
         logger.debug("Napari viewer initialized")
 
@@ -744,6 +767,9 @@ class StreamingViewer:
         # Keep the start button label consistent with the new mode
         if self.start_button.isEnabled():
             self._sync_start_button_label()
+        pipeline = getattr(self.app, "pipeline", None)
+        if pipeline is not None:
+            self.safe_execution(pipeline.refresh_reader)
 
     def _set_live_latest_preference(self, enabled: bool) -> None:
         """Store the latest-frame preference for the next acquisition.
@@ -933,12 +959,7 @@ class StreamingViewer:
         # immediately (not just on next Start click).
         pipeline = getattr(self.app, "pipeline", None)
         if pipeline is not None:
-
-            async def _restart_reader() -> None:
-                await pipeline.suspend_reader()
-                await pipeline.resume_reader()
-
-            self.safe_execution(_restart_reader)
+            self.safe_execution(pipeline.refresh_reader)
 
     def _expected_display_frame_count(self) -> int:
         """Return the expected unique frame count for Display mode."""
@@ -1318,11 +1339,23 @@ class StreamingViewer:
             - Handles absence of running loop gracefully
         """
 
+        async def run_action() -> None:
+            if self.closed.is_set():
+                logger.debug("Skipping action after plugin closure")
+                return
+            task = asyncio.current_task()
+            assert task is not None
+            self._action_tasks.add(task)
+            try:
+                await fn()
+            finally:
+                self._action_tasks.discard(task)
+
         worker_loop = getattr(self.app, "worker_loop", None)
 
         if worker_loop is not None and not worker_loop.is_closed():
             # Embedded mode (plugin) - schedule in worker thread loop
-            asyncio.run_coroutine_threadsafe(fn(), worker_loop)
+            asyncio.run_coroutine_threadsafe(run_action(), worker_loop)
         else:
             # Standalone mode - schedule in main loop
             try:
@@ -1330,7 +1363,7 @@ class StreamingViewer:
                 logger.debug(
                     "Scheduling experiment start in main loop (standalone mode)"
                 )
-                loop.create_task(fn())
+                loop.create_task(run_action())
             except RuntimeError as e:
                 # No running loop - this shouldn't happen
                 logger.error(f"No running event loop available: {e}")
@@ -1505,8 +1538,7 @@ class StreamingViewer:
                 finally:
                     self.current_experiment_id = None
                     self._standalone_zarr_active = False
-                    # Restart the pipeline reader so Display mode
-                    # works again for the next experiment.
+                    # Resume only if the UI has switched to watch mode.
                     if pipeline is not None:
                         await pipeline.resume_reader()
                     self.signals.show_stop_button.emit(False)
@@ -1821,6 +1853,7 @@ class StreamingViewer:
         pipeline = getattr(self.app, "pipeline", None)
         if pipeline is not None:
             pipeline.set_target_experiment(None)
+            self.safe_execution(pipeline.refresh_reader)
         if not self.is_streaming:
             self._release_live_preview_option()
 
@@ -1959,7 +1992,9 @@ class StreamingViewer:
         # Process buffer with lock protection
         if not self.is_processing:
             self.is_processing = True
-            asyncio.create_task(self._process_buffer_with_lock())
+            self.processing_task = asyncio.create_task(
+                self._process_buffer_with_lock()
+            )
 
     def _clear_layers(self):
         """Remove only this plugin's layers on the Qt thread."""
@@ -3066,6 +3101,32 @@ class StreamingViewer:
             This is mainly used in standalone mode.
         """
         self.viewer.show()
+
+    async def shutdown(self) -> None:
+        """Cancel owned async work, including any dedicated OME-ZARR reader."""
+        self.closed.set()
+        self.signals.close_progress.emit()
+        tasks = set(self._action_tasks)
+        tasks.update(
+            task
+            for task in (
+                self.status_monitor_task,
+                self.restructure_task,
+                self.processing_task,
+            )
+            if task is not None
+        )
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(
+                    "Background task failed during plugin shutdown",
+                    exc_info=result,
+                )
+        self.image_buffer.clear()
+        self.metadata_buffer.clear()
 
     def close(self) -> None:
         """

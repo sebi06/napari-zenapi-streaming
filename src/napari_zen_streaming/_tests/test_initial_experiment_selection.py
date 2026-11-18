@@ -468,6 +468,7 @@ def test_selected_metadata_updates_derived_total_frames() -> None:
 def test_mode_switch_keeps_dimensions_and_hides_writer_options() -> None:
     """Both modes show loaded dimensions; only ZARR shows writer settings."""
     viewer = StreamingViewer.__new__(StreamingViewer)
+    viewer.app = None
     visibility: dict[str, list[bool]] = {}
     for name in (
         "experiment_label",
