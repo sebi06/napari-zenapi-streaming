@@ -42,12 +42,12 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
 
 ## Current status
 
-- Release: **0.0.4** ([release notes](_release_notes/v0.0.4.md)).
+- Release: **0.0.3** ([release notes](_release_notes/v0.0.3.md)).
 - Project phase: alpha / MVP
 - Primary OS target: Windows for ZEN Blue and the ZEN API Gateway
 - Python target: `>=3.12, <3.15`
 
-### What's new in 0.0.4
+### What's new in 0.0.3
 
 - Closing the Experiment Selector dock stops its stream listeners and
   background tasks, including an active dedicated OME-ZARR writer, without
@@ -201,16 +201,16 @@ without confirming redistribution rights.
 For a published PyPI release:
 
 ```powershell
-python -m pip install "napari-zenapi-streaming==0.0.4" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
+python -m pip install "napari-zenapi-streaming==0.0.3" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
 ```
 
 To upgrade an existing environment with compatible ZEN wheels installed:
 
 ```powershell
-python -m pip install --upgrade "napari-zenapi-streaming==0.0.4"
+python -m pip install --upgrade "napari-zenapi-streaming==0.0.3"
 ```
 
-Restart napari after upgrading. Version 0.0.4 writes OME-Zarr 0.6 and does not
+Restart napari after upgrading. Version 0.0.3 writes OME-Zarr 0.6 and does not
 automatically migrate older stores. Use a reader that supports 0.6.
 
 From this checkout, install the plugin:
