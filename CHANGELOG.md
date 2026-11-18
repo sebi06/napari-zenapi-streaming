@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.0.4 - 2026-11-18
+
+### Fixed
+
+- Closing or removing the Experiment Selector dock now closes its pixel
+  stream subscriptions and cancels owned background tasks, including the
+  dedicated OME-ZARR writer. The ZEN acquisition and napari remain open.
+- Start-selected Display mode no longer subscribes before Start is clicked.
+  The selected experiment ID is armed before subscription and acquisition,
+  retained through trailing-frame delivery, and cleared after finalization
+  when the reader returns to an unsubscribed idle state.
+- Mode and channel-filter changes no longer arm an idle selected-experiment
+  reader. Passive watch mode continues to subscribe immediately.
+- Serialize reader transitions to prevent duplicate listeners during
+  overlapping shutdown, mode changes, and repeated acquisitions.
+
+### Added
+
+- Stream-lifecycle regression tests covering idle modes, mode and channel
+  changes, experiment filtering, repeated runs, failed starts, dock closure
+  and removal, dedicated-writer cancellation, and embedded worker shutdown.
+
 ## 0.0.2 - 2026-11-17
 
 ### Added

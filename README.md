@@ -42,18 +42,21 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
 
 ## Current status
 
-- Release: **0.0.2** ([release notes](_release_notes/v0.0.2.md)).
+- Release: **0.0.4** ([release notes](_release_notes/v0.0.4.md)).
 - Project phase: alpha / MVP
 - Primary OS target: Windows for ZEN Blue and the ZEN API Gateway
 - Python target: `>=3.12, <3.15`
 
-### What's new in 0.0.2
+### What's new in 0.0.4
 
-- Original GRAY8/GRAY16 pixels in Display mode, without per-tile stretching.
-- Optional stream-only viewing with channel filtering and no final mosaic.
-- Scrollable experiment controls for smaller plugin docks.
-- OME-Zarr 0.6 output and collection-opening fixes. Reading older OME-Zarr
-  acquisitions now requires explicit conversion outside the plugin.
+- Closing the Experiment Selector dock stops its stream listeners and
+  background tasks, including an active dedicated OME-ZARR writer, without
+  stopping the acquisition in ZEN or closing napari.
+- Start-selected Display mode waits for Start before subscribing, filters
+  frames by the selected experiment ID, and disconnects after finalization.
+- Mode changes, channel-filter changes, and repeated runs no longer
+  accidentally open idle or duplicate stream subscriptions.
+- Watch mode still listens immediately for experiments started in ZEN.
 
 ## Known limitations
 
@@ -198,16 +201,16 @@ without confirming redistribution rights.
 For a published PyPI release:
 
 ```powershell
-python -m pip install "napari-zenapi-streaming==0.0.2" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
+python -m pip install "napari-zenapi-streaming==0.0.4" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
 ```
 
 To upgrade an existing environment with compatible ZEN wheels installed:
 
 ```powershell
-python -m pip install --upgrade "napari-zenapi-streaming==0.0.2"
+python -m pip install --upgrade "napari-zenapi-streaming==0.0.4"
 ```
 
-Restart napari after upgrading. Version 0.0.2 writes OME-Zarr 0.6 and does not
+Restart napari after upgrading. Version 0.0.4 writes OME-Zarr 0.6 and does not
 automatically migrate older stores. Use a reader that supports 0.6.
 
 From this checkout, install the plugin:
