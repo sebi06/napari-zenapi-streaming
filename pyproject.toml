@@ -21,7 +21,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming", "ZEN-API"]
+keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming", "ZEN-API", "OME_ZARR", "ZARR"]
 
 dependencies = [
     "napari>=0.9.1",
