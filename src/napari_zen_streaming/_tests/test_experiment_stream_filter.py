@@ -118,6 +118,124 @@ def test_failed_start_clears_experiment_filter() -> None:
     pipeline.suspend_reader.assert_awaited_once()
 
 
+def test_reader_failure_does_not_leave_start_waiting(streaming_app) -> None:
+    """A failed subscription aborts startup instead of waiting for readiness."""
+    app, _dock, _window, _streams = streaming_app
+    app.connection.streaming_service.monitor_all_experiments.side_effect = (
+        RuntimeError("subscription failed")
+    )
+
+    async def run() -> None:
+        await app.pipeline.start()
+        try:
+            with pytest.raises(RuntimeError, match="subscription failed"):
+                await asyncio.wait_for(
+                    app.pipeline.start_targeted_experiment("test"),
+                    timeout=0.5,
+                )
+            app.connection.start_loaded_experiment.assert_not_awaited()
+            assert app.pipeline._target_experiment_id is None
+            assert app.pipeline.reader_task is None
+        finally:
+            await app.pipeline.stop()
+            await app.viewer.shutdown()
+
+    asyncio.run(run())
+
+
+def test_stream_close_failure_still_stops_processor(
+    streaming_app, monkeypatch
+) -> None:
+    """Reader-close failures remain visible while accepted frames are drained."""
+    app, _dock, _window, streams = streaming_app
+    app.viewer.add_frame = AsyncMock()
+    monkeypatch.setattr(
+        "napari_zen_streaming.ZEN_pipeline.process_frame",
+        lambda response: (response, None),
+    )
+
+    async def run() -> None:
+        await app.pipeline.start()
+        try:
+            await app.pipeline.start_targeted_experiment("test")
+            app.pipeline.queue.put_nowait(_response("experiment-42"))
+            app.pipeline.queue.put_nowait(_response("experiment-42"))
+            streams[0].aclose = AsyncMock(
+                side_effect=RuntimeError("stream close failed")
+            )
+            with pytest.raises(RuntimeError, match="stream close failed"):
+                await asyncio.wait_for(app.pipeline.stop(), timeout=0.5)
+            assert app.pipeline.processor_task.done()
+            assert app.pipeline.reader_task is None
+            assert app.pipeline.frames_processed == 2
+            assert app.pipeline.queue.empty()
+            assert app.viewer.add_frame.await_count == 2
+            streams[0].aclose.assert_awaited_once()
+        finally:
+            await app.pipeline.stop()
+            await app.viewer.shutdown()
+
+    asyncio.run(run())
+
+
+def test_exhausted_reader_cannot_start_acquisition(streaming_app) -> None:
+    """An empty global stream fails startup rather than leaving it waiting."""
+    app, _dock, _window, _streams = streaming_app
+
+    class EmptyStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def aclose(self) -> None:
+            return None
+
+    app.connection.streaming_service.monitor_all_experiments.side_effect = (
+        lambda _request: EmptyStream()
+    )
+
+    async def run() -> None:
+        await app.pipeline.start()
+        try:
+            with pytest.raises(RuntimeError, match="Pixel stream closed"):
+                await asyncio.wait_for(
+                    app.pipeline.start_targeted_experiment("test"),
+                    timeout=0.5,
+                )
+            app.connection.start_loaded_experiment.assert_not_awaited()
+            assert app.pipeline.reader_task is None
+        finally:
+            await app.pipeline.stop()
+            await app.viewer.shutdown()
+
+    asyncio.run(run())
+
+
+def test_stop_reports_completed_reader_failure(streaming_app) -> None:
+    """Shutdown retrieves errors even when the reader has already exited."""
+    app, _dock, _window, _streams = streaming_app
+    app.viewer._mode_index = 0
+    app.connection.streaming_service.monitor_all_experiments.side_effect = (
+        RuntimeError("subscription failed")
+    )
+
+    async def run() -> None:
+        await app.pipeline.start()
+        try:
+            await _wait_until(app.pipeline.reader_task.done)
+            with pytest.raises(RuntimeError, match="subscription failed"):
+                await asyncio.wait_for(app.pipeline.stop(), timeout=0.5)
+            assert app.pipeline.processor_task.done()
+            assert app.pipeline.reader_task is None
+        finally:
+            await app.pipeline.stop()
+            await app.viewer.shutdown()
+
+    asyncio.run(run())
+
+
 def test_stop_drains_queued_frames(monkeypatch) -> None:
     """Shutdown finishes processing frames already accepted by the reader."""
     processed = []

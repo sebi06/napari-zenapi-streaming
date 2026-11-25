@@ -171,18 +171,20 @@ docs/
 Use the same Python environment for the wheels, the plugin, and napari. The
 current dependency requirements are:
 
-- `zen_api>=2026.5.1,<=2026.11.1`: choose a version compatible with your ZEN API
+- `zen_api>=2026.5.1`: choose a version compatible with your ZEN API
   Gateway.
-- `zen_api_utils>=0.1.0,<0.2`: utilities have their own version number, separate
+- `zen_api_utils>=0.2.0`: utilities have their own version number, separate
   from the API release.
 
-For example, install API `2026.7.1` and utilities `0.1.0` from OAD:
+The installed utilities may impose additional API version bounds; removing
+the plugin's upper bound does not guarantee compatibility with every gateway.
+For example, install API `2026.11.1` and utilities `0.2.0` from OAD:
 
 ```powershell
 $base = "https://github.com/zeiss-microscopy/OAD/releases/download"
 python -m pip install `
-  "$base/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" `
-  "$base/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
+  "$base/v2026.11.1-r1/zen_api-2026.11.1-py3-none-any.whl" `
+  "$base/zen-api-utils-v0.2.0-r1/zen_api_utils-0.2.0-py3-none-any.whl"
 ```
 
 The backtick is PowerShell's line-continuation character. Alternatively, pass
@@ -191,7 +193,7 @@ the paths to your downloaded authorized wheels:
 ```powershell
 python -m pip install `
   "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl" `
-  "C:\path\to\authorized\zen_api_utils-0.1.0-py3-none-any.whl"
+  "C:\path\to\authorized\zen_api_utils-0.2.0-py3-none-any.whl"
 ```
 
 Replace the example paths and API version with the wheels supplied for your
@@ -495,6 +497,11 @@ is cleared and the subscription is closed after final restructure. Switch to
 A ZEN-started run has no experiment ID known in advance and
 therefore continues to accept the global stream; keep only one such
 acquisition active at a time.
+
+If the pixel reader fails or closes before it is ready, acquisition startup
+fails instead of waiting indefinitely. Shutdown reports reader and stream-close
+errors while still draining accepted frames and stopping the frame processor.
+An OME-ZARR writer is not started if suspending the Display reader fails.
 
 #### OME-ZARR only (index 2)
 
@@ -880,14 +887,15 @@ python -m build --sdist --wheel
 - Tests mock the gateway and cover routing, partial acquisitions, mosaics,
   metadata refresh, dtype handling, progress, configuration, and layer
   ownership.
-- A clean Windows environment passed the full test suite with Python 3.12.15,
+- An earlier release passed the full test suite in a clean Windows environment
+  with Python 3.12.15,
   napari 0.10.0, PyQt6 6.9.1, ome-writers 0.3.2, ngff-zarr 0.51.0,
   zen-api 2026.7.1, and zen-api-utils 0.1.0. This records one tested
   environment, not a claim that every gateway version is compatible.
 - CI checks Python 3.12-3.14 on Windows, Linux, and macOS. Pushes and pull
   requests target `main`; version tags trigger publishing only after tests pass.
-- CI supplies the public OAD release wheel URLs for `zen_api==2026.7.1` and
-  `zen_api_utils==0.1.0` in the same pip command as the plugin installation.
+- CI supplies the public OAD release wheel URLs for `zen_api==2026.11.1` and
+  `zen_api_utils==0.2.0` in the same pip command as the plugin installation.
   No ZEN wheel URL secret is required, including for forked pull requests.
 - The testing extra installs `PyQt6>=6.7,<6.10`. Both CI workflows set
   `QT_API=pyqt6` and `PYTEST_QT_API=pyqt6` to avoid selecting another binding.
