@@ -1,6 +1,6 @@
 [project]
 name = "napari-zenapi-streaming"
-version = "0.0.4"
+version = "0.0.5"
 description = "ZEN API streaming plugin for napari"
 readme = "README.md"
 requires-python = ">=3.12, <3.15"
