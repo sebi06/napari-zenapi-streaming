@@ -16,10 +16,12 @@ The pipeline supports two modes:
 import asyncio
 import contextlib
 import logging
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 
 from zen_api.acquisition.v1beta import (
     ExperimentStreamingServiceMonitorAllExperimentsRequest,
+    ExperimentStreamingServiceMonitorAllExperimentsResponse,
 )
 
 from napari_zen_streaming.ZEN_config import ZENConfig
@@ -52,7 +54,7 @@ class StreamingPipeline:
         experiment: ExperimentContext,
         viewer: StreamingViewer,
         config: ZENConfig,
-    ):
+    ) -> None:
         """
         Initialize streaming pipeline.
 
@@ -75,14 +77,16 @@ class StreamingPipeline:
 
         # Set max size of 200 images in queue; number is set to be large enough to handle bursts
         # but not too large to run out of a normal amount of memory (~4GB for 200 4096x3008 uint16 images)
-        self.queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self.queue: asyncio.Queue[
+            ExperimentStreamingServiceMonitorAllExperimentsResponse
+        ] = asyncio.Queue(maxsize=200)
 
         # Event to signal pipeline shutdown
         self.stop_event = asyncio.Event()
 
         # ========== Async Tasks ==========
         # Reader task pulls frames from ZEN API
-        self.reader_task: asyncio.Task | None = None
+        self.reader_task: asyncio.Task[None] | None = None
 
         # Active gRPC async iterator for the reader task.
         # Stored here so suspend_reader() can call aclose() on it
@@ -100,7 +104,7 @@ class StreamingPipeline:
         self._target_experiment_id: str | None = None
 
         # Processor task processes frames and updates viewer
-        self.processor_task: asyncio.Task | None = None
+        self.processor_task: asyncio.Task[None] | None = None
 
         # ========== Statistics ==========
         # Track pipeline performance
@@ -123,39 +127,21 @@ class StreamingPipeline:
         logger.debug("Pipeline started - reader and processor tasks running")
 
     async def stop(self) -> None:
-        """
-        Stop the streaming pipeline gracefully.
-
-        Shutdown sequence:
-        1. Set stop event to signal tasks
-        2. Cancel reader task (it's blocking on async iteration)
-        3. Wait for queue to empty (process remaining frames)
-        4. Cancel processor task
-        5. Log final statistics
-        """
+        """Close the reader and drain accepted frames, even if closing fails."""
         logger.debug("Stopping streaming pipeline")
-
-        # Signal all tasks to stop
         self.stop_event.set()
 
-        # Serialize shutdown with any pending mode or channel change.
-        await self.suspend_reader()
-
-        # Wait for queue to empty (process remaining frames)
-        if self.queue:
-            await self.queue.join()
-            logger.debug("Frame queue emptied")
-
-        # Cancel processor task
-        if self.processor_task:
-            self.processor_task.cancel()
-            try:
+        try:
+            await self.suspend_reader()
+        finally:
+            # The processor exits once stop is requested and its queue is empty.
+            if self.processor_task is not None:
                 await self.processor_task
-            except asyncio.CancelledError:
-                logger.debug("Processor task cancelled successfully")
 
         logger.debug(
-            f"Pipeline stopped. Statistics: Received={self.frames_received}, Processed={self.frames_processed}"
+            "Pipeline stopped. Statistics: Received=%s, Processed=%s",
+            self.frames_received,
+            self.frames_processed,
         )
 
     async def _read_frames(self) -> None:
@@ -172,7 +158,8 @@ class StreamingPipeline:
         - Pipeline is stopped (stop_event set)
         - Error occurs
 
-        When the iterator completes, notifies viewer that experiment finished.
+        Acquisition completion uses the viewer's frame count and inactivity
+        timeout, not the lifetime of the global transport.
         """
         logger.debug("Starting frame reader task")
 
@@ -199,13 +186,8 @@ class StreamingPipeline:
             # Use the viewer's effective channel index (overridable
             # from the UI combo box) rather than the frozen config
             # value, so the user can change it at runtime.
-            effective_ch = getattr(
-                self.viewer,
-                "_effective_channel_index",
-                self.config.channel_index,
-            )
             request = ExperimentStreamingServiceMonitorAllExperimentsRequest(
-                channel_index=effective_ch,
+                channel_index=self.viewer._effective_channel_index,
                 enable_raw_data=self.config.enable_raw_data,
             )
             self._reader_iter = (
@@ -233,8 +215,8 @@ class StreamingPipeline:
                 # Queue frame for processing
                 if self.queue.full():
                     logger.warning(
-                        f"Queue full (maxsize={self.queue.maxsize})."
-                        " Dropping or delaying item."
+                        "Frame queue full (maxsize=%s); waiting for processing",
+                        self.queue.maxsize,
                     )
 
                 await self.queue.put(response)
@@ -245,17 +227,6 @@ class StreamingPipeline:
                 f"Frame iterator completed after "
                 f"{self.frames_received} frames (experiment finished)"
             )
-
-            # Notify viewer that experiment has finished
-            # This triggers restructure for ZEN-started experiments
-            if hasattr(self.viewer, "on_experiment_finished"):
-                try:
-                    await self.viewer.on_experiment_finished()
-                except Exception as e:
-                    logger.error(
-                        f"Error calling on_experiment_finished: {e}",
-                        exc_info=True,
-                    )
 
         except asyncio.CancelledError:
             logger.debug("Frame reader task cancelled (pipeline stopped)")
@@ -274,8 +245,7 @@ class StreamingPipeline:
             iter_ref = self._reader_iter
             self._reader_iter = None
             if iter_ref is not None:
-                with contextlib.suppress(Exception):
-                    await iter_ref.aclose()
+                await iter_ref.aclose()
                 logger.debug("gRPC reader iterator closed")
             logger.debug("Frame reader task stopped")
 
@@ -290,7 +260,9 @@ class StreamingPipeline:
                 experiment_id,
             )
 
-    def _accepts_response(self, response: Any) -> bool:
+    def _accepts_response(
+        self, response: ExperimentStreamingServiceMonitorAllExperimentsResponse
+    ) -> bool:
         """Return whether a streamed frame matches the active target."""
         if not self.reader_enabled:
             return False
@@ -317,11 +289,27 @@ class StreamingPipeline:
             self._resume_reader()
 
     async def ensure_reader_ready(self) -> None:
-        """Ensure the perpetual all-experiments stream is armed."""
+        """Wait for an armed reader, propagating startup failures promptly."""
         await self.resume_reader()
-        if not self.reader_enabled:
+        reader_task = self.reader_task
+        if not self.reader_enabled or reader_task is None:
             raise RuntimeError("Pixel stream is not armed or has been closed")
-        await self._reader_ready.wait()
+
+        ready_task = asyncio.create_task(self._reader_ready.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (reader_task, ready_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if reader_task in done:
+                await reader_task
+                raise RuntimeError(
+                    "Pixel stream closed before acquisition could start"
+                )
+        finally:
+            ready_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ready_task
 
     async def start_targeted_experiment(
         self,
@@ -404,7 +392,7 @@ class StreamingPipeline:
                 f"Frame processor task stopped (processed {self.frames_processed} total frames)"
             )
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         """
         Context manager entry - start the pipeline.
 
@@ -417,7 +405,12 @@ class StreamingPipeline:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """
         Context manager exit - stop the pipeline gracefully.
 
@@ -451,19 +444,20 @@ class StreamingPipeline:
 
     async def _suspend_reader(self) -> None:
         """Close the current reader while holding the lifecycle lock."""
-        if self.reader_task and not self.reader_task.done():
-            self.reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self.reader_task
-            self.reader_task = None
-        # Belt-and-suspenders: aclose() is also called in _read_frames'
-        # finally block, but if that await was itself interrupted we
-        # may need another attempt here.
-        if self._reader_iter is not None:
-            with contextlib.suppress(Exception):
-                await self._reader_iter.aclose()
-            self._reader_iter = None
-            logger.debug("Pipeline gRPC iterator explicitly closed")
+        reader_task = self.reader_task
+        self.reader_task = None
+        try:
+            if reader_task is not None:
+                reader_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader_task
+        finally:
+            # Retry cleanup if cancellation interrupted the reader's finally.
+            if self._reader_iter is not None:
+                iter_ref = self._reader_iter
+                self._reader_iter = None
+                await iter_ref.aclose()
+                logger.debug("Pipeline gRPC iterator explicitly closed")
         logger.debug("Pipeline reader suspended")
 
     async def resume_reader(self) -> None:

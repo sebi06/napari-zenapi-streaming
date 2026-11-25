@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.5 - 2026-11-25
+
+### Fixed
+
+- Fail Display acquisition startup promptly when the pixel reader fails or
+  closes before becoming ready, rather than waiting indefinitely.
+- Report reader and stream-close failures, including errors from readers that
+  have already exited. Drain accepted frames and stop the frame processor
+  even when reader cleanup fails.
+
+### Changed
+
+- Clarify Display-reader lifecycle types and remove an unused viewer callback.
+  Add regression tests for failed subscriptions, early stream completion,
+  stream-close failures, and completed-reader error reporting.
+- Require `zen_api_utils>=0.2.0` and remove the plugin's `zen_api` upper bound.
+  Gateway and installed-utilities compatibility constraints still apply.
+- Align CI and installation examples with the public `zen_api==2026.11.1`
+  and `zen_api_utils==0.2.0` wheels, and add OME-Zarr package keywords.
+
 ## 0.0.4 - 2026-11-18
 
 ### Fixed

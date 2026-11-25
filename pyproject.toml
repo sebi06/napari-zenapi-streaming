@@ -1,6 +1,6 @@
 [project]
 name = "napari-zenapi-streaming"
-version = "0.0.4"
+version = "0.0.5"
 description = "ZEN API streaming plugin for napari"
 readme = "README.md"
 requires-python = ">=3.12, <3.15"
@@ -21,7 +21,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming", "ZEN-API"]
+keywords = ["napari", "plugin", "microscopy", "ZEN", "streaming", "ZEN-API", "OME_ZARR", "ZARR"]
 
 dependencies = [
     "napari>=0.9.1",
@@ -35,8 +35,8 @@ dependencies = [
     "ome-writers[acquire-zarr]",
     "ngff-zarr[dask-image]>=0.51.0",
     "zarr>=3",
-    "zen_api>=2026.5.1,<=2026.11.1",
-    "zen_api_utils>=0.1.0,<0.2",
+    "zen_api>=2026.5.1",
+    "zen_api_utils>=0.2.0",
 ]
 
 [project.optional-dependencies]

@@ -42,23 +42,25 @@ When finished the resulting OME-ZARR, created from the ZEN pixel stream can be s
 
 ## Current status
 
-- Release: **0.0.4** ([release notes](_release_notes/v0.0.4.md)).
+- Release: **0.0.5** ([release notes](_release_notes/v0.0.5.md)).
 - Project phase: alpha / MVP
 - Primary OS target: Windows for ZEN Blue and the ZEN API Gateway
 - Python target: `>=3.12, <3.15`
 
-### What's new in 0.0.4
+### What's new in 0.0.5
 
-- Configured OME-ZARR acquisition preserves active channel names and actual
-  display colors from the selected ZEN experiment.
-- Per-image OMERO display metadata follows channel subscriptions and
-  single-channel selections across generic scenes, HCS wells, and retained
-  source tiles.
-- Pyramid generation retains these settings so `napari-ome-zarr` opens new
-  output with the experiment's colors. Missing or invalid colors warn and
-  use neutral grayscale rather than guessing a biological color.
-- See the [0.0.3 release notes](_release_notes/v0.0.3.md) for the preceding
-  stream-activation and shutdown fixes.
+- Display acquisition startup fails promptly if its pixel reader fails or
+  closes before becoming ready, rather than waiting indefinitely.
+- Shutdown reports reader and stream-close errors while still draining
+  accepted frames and stopping the frame processor.
+- Display-reader lifecycle code has clearer types and regression coverage
+  for startup, early stream completion, and shutdown failures.
+- Require `zen_api_utils>=0.2.0`; CI and installation examples use the public
+  `zen_api==2026.11.1` and `zen_api_utils==0.2.0` wheels. The plugin no longer
+  imposes its own API upper bound; gateway and utilities compatibility still
+  apply.
+- See the [0.0.4 release notes](_release_notes/v0.0.4.md) for the preceding
+  OME-Zarr channel-name and display-color improvements.
 
 ## Known limitations
 
@@ -171,18 +173,20 @@ docs/
 Use the same Python environment for the wheels, the plugin, and napari. The
 current dependency requirements are:
 
-- `zen_api>=2026.5.1,<=2026.11.1`: choose a version compatible with your ZEN API
+- `zen_api>=2026.5.1`: choose a version compatible with your ZEN API
   Gateway.
-- `zen_api_utils>=0.1.0,<0.2`: utilities have their own version number, separate
+- `zen_api_utils>=0.2.0`: utilities have their own version number, separate
   from the API release.
 
-For example, install API `2026.7.1` and utilities `0.1.0` from OAD:
+The installed utilities may impose additional API version bounds; removing
+the plugin's upper bound does not guarantee compatibility with every gateway.
+For example, install API `2026.11.1` and utilities `0.2.0` from OAD:
 
 ```powershell
 $base = "https://github.com/zeiss-microscopy/OAD/releases/download"
 python -m pip install `
-  "$base/v2026.07.1/zen_api-2026.7.1-py3-none-any.whl" `
-  "$base/zen-api-utils-v0.1.0/zen_api_utils-0.1.0-py3-none-any.whl"
+  "$base/v2026.11.1-r1/zen_api-2026.11.1-py3-none-any.whl" `
+  "$base/zen-api-utils-v0.2.0-r1/zen_api_utils-0.2.0-py3-none-any.whl"
 ```
 
 The backtick is PowerShell's line-continuation character. Alternatively, pass
@@ -191,7 +195,7 @@ the paths to your downloaded authorized wheels:
 ```powershell
 python -m pip install `
   "C:\path\to\authorized\zen_api-<version>-py3-none-any.whl" `
-  "C:\path\to\authorized\zen_api_utils-0.1.0-py3-none-any.whl"
+  "C:\path\to\authorized\zen_api_utils-0.2.0-py3-none-any.whl"
 ```
 
 Replace the example paths and API version with the wheels supplied for your
@@ -203,16 +207,16 @@ without confirming redistribution rights.
 For a published PyPI release:
 
 ```powershell
-python -m pip install "napari-zenapi-streaming==0.0.4" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
+python -m pip install "napari-zenapi-streaming==0.0.5" "napari[pyqt6]" "PyQt6>=6.7,<6.10"
 ```
 
 To upgrade an existing environment with compatible ZEN wheels installed:
 
 ```powershell
-python -m pip install --upgrade "napari-zenapi-streaming==0.0.4"
+python -m pip install --upgrade "napari-zenapi-streaming==0.0.5"
 ```
 
-Restart napari after upgrading. Version 0.0.4 writes OME-Zarr 0.6 and does not
+Restart napari after upgrading. Version 0.0.5 writes OME-Zarr 0.6 and does not
 automatically migrate older stores or add channel colors to existing output.
 Use a reader that supports 0.6 and OMERO channel display metadata.
 
@@ -495,6 +499,11 @@ is cleared and the subscription is closed after final restructure. Switch to
 A ZEN-started run has no experiment ID known in advance and
 therefore continues to accept the global stream; keep only one such
 acquisition active at a time.
+
+If the pixel reader fails or closes before it is ready, acquisition startup
+fails instead of waiting indefinitely. Shutdown reports reader and stream-close
+errors while still draining accepted frames and stopping the frame processor.
+An OME-ZARR writer is not started if suspending the Display reader fails.
 
 #### OME-ZARR only (index 2)
 
@@ -880,14 +889,14 @@ python -m build --sdist --wheel
 - Tests mock the gateway and cover routing, partial acquisitions, mosaics,
   metadata refresh, dtype handling, progress, configuration, and layer
   ownership.
-- A clean Windows environment passed the full test suite with Python 3.12.15,
-  napari 0.10.0, PyQt6 6.9.1, ome-writers 0.3.2, ngff-zarr 0.51.0,
-  zen-api 2026.7.1, and zen-api-utils 0.1.0. This records one tested
-  environment, not a claim that every gateway version is compatible.
+- Release checks include 148 simulated-gateway tests, Ruff lint/format,
+  focused mypy checks for the Display pipeline, source/wheel builds, and an
+  installed-wheel configuration and plugin-discovery smoke test. These
+  checks do not certify every gateway version or real-microscope throughput.
 - CI checks Python 3.12-3.14 on Windows, Linux, and macOS. Pushes and pull
   requests target `main`; version tags trigger publishing only after tests pass.
-- CI supplies the public OAD release wheel URLs for `zen_api==2026.7.1` and
-  `zen_api_utils==0.1.0` in the same pip command as the plugin installation.
+- CI supplies the public OAD release wheel URLs for `zen_api==2026.11.1` and
+  `zen_api_utils==0.2.0` in the same pip command as the plugin installation.
   No ZEN wheel URL secret is required, including for forked pull requests.
 - The testing extra installs `PyQt6>=6.7,<6.10`. Both CI workflows set
   `QT_API=pyqt6` and `PYTEST_QT_API=pyqt6` to avoid selecting another binding.
@@ -896,8 +905,12 @@ python -m build --sdist --wheel
 
 - Confirm the pinned OAD release wheels remain reachable and the full CI
   matrix passes. Local tests do not replace this check.
-- Choose the release version, update `pyproject.toml` and `CHANGELOG.md`, and
-  verify the tag matches. No release version is selected by the cleanup.
+- Keep the version in `pyproject.toml` and `src/napari_zen_streaming/__init__.py`
+  consistent. Update `CHANGELOG.md`, the README, and
+  `_release_notes/v<version>.md`, preserving historical release entries.
+- Merge the release preparation into `main` after CI passes, then create the
+  matching annotated `v<version>` tag and GitHub release from that commit.
+  The tag triggers the PyPI workflow; verify publication before announcing it.
 - Install the built wheel in a clean environment, initialize user configuration,
   and verify plugin discovery without relying on this checkout.
 - On a real ZEN gateway, test watch/start Display modes, manual/auto-triggered

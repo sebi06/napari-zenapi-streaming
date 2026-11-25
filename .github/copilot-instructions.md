@@ -267,7 +267,7 @@ Experiment INI: CLI overrides > INI settings; exported XML replaces INI dimensio
 ### ZEN API
 - **zen_api** - ZEISS ZEN API client (gRPC stubs)
    - Install an authorized compatible wheel separately; no public URL is assumed
-   - CI installs zen-api 2026.7.1 and zen-api-utils 0.1.0 from OAD release URLs
+   - CI installs zen-api 2026.11.1 and zen-api-utils 0.2.0 from OAD release URLs
 
 ### Development
 - **pytest** - Testing
